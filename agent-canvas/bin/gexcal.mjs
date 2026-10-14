@@ -266,6 +266,13 @@ const commands = {
       return;
     }
     await call(state, "shutdown", {});
+    const until = Date.now() + 8000;
+    while (alive(state.pid) && Date.now() < until) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+    if (alive(state.pid)) {
+      die(`the canvas server (pid ${state.pid}) did not exit`);
+    }
     console.log("stopped");
   },
 

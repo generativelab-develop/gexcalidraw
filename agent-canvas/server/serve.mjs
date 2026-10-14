@@ -52,10 +52,7 @@ const server = await createServer({
       file,
       token,
       headless: !values["no-headless"],
-      onShutdown: () => {
-        clearState(process.pid);
-        server.close().finally(() => process.exit(0));
-      },
+      onShutdown: () => stop(),
     }),
   ],
 });
@@ -67,9 +64,16 @@ const url = `http://127.0.0.1:${port}/`;
 writeState({ pid: process.pid, port, url, file, token, started: Date.now() });
 console.log(`gexcal canvas: ${url}  (scene ${file})`);
 
-const stop = () => {
+let stopping = false;
+function stop() {
+  if (stopping) {
+    return;
+  }
+  stopping = true;
   clearState(process.pid);
+  // never hang on a socket that will not close
+  setTimeout(() => process.exit(0), 3000).unref();
   server.close().finally(() => process.exit(0));
-};
+}
 process.on("SIGINT", stop);
 process.on("SIGTERM", stop);

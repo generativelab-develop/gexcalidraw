@@ -209,7 +209,13 @@ export function gexcalBridge({ file, token, headless = true, onShutdown }) {
     });
   };
 
+  let shutDown = false;
+  // closing the server emits "close", which lands here again: run once
   const shutdown = () => {
+    if (shutDown) {
+      return;
+    }
+    shutDown = true;
     fs.unwatchFile(file);
     if (headlessChild) {
       headlessChild.kill();
