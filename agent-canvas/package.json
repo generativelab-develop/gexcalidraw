@@ -1,0 +1,24 @@
+{
+  "name": "@gexcalidraw/agent-canvas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A live Excalidraw canvas that coding agents draw on through the `gexcal` CLI.",
+  "type": "module",
+  "bin": {
+    "gexcal": "./bin/gexcal.mjs"
+  },
+  "dependencies": {
+    "@excalidraw/excalidraw": "*",
+    "elkjs": "0.11.0",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "vite": "5.0.12"
+  },
+  "scripts": {
+    "gexcal": "node ./bin/gexcal.mjs",
+    "test": "node ./test/live.e2e.mjs"
+  }
+}

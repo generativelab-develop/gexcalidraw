@@ -5,7 +5,8 @@
   "workspaces": [
     "excalidraw-app",
     "packages/*",
-    "examples/*"
+    "examples/*",
+    "agent-canvas"
   ],
   "devDependencies": {
     "@babel/preset-env": "7.26.9",

@@ -32,3 +32,7 @@ yarn fix             # Auto-fix formatting and linting issues
 - Internal packages use path aliases (see `vitest.config.mts`)
 - Build system uses esbuild for packages, Vite for the app
 - TypeScript throughout with strict configuration
+
+## Agent canvas (`gexcal`)
+
+`agent-canvas/` is a live canvas agents draw on through the `gexcal` CLI (architecture and code maps, with notes). To draw a diagram, read `agent-canvas/skills/gexcal/SKILL.md` first; `agent-canvas/README.md` explains the design.

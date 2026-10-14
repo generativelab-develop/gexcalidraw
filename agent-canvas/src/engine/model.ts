@@ -1,0 +1,374 @@
+// The agent's view of a diagram: nodes, edges, groups and notes, each with a
+// stable id the agent chose. The model is never stored on its own; it is read
+// back out of the scene (every element the agent owns carries `customData.gx`)
+// so whatever a person changed on the canvas, a moved box, a recoloured
+// group, is part of the model the next agent operation starts from.
+
+import type {
+  ExcalidrawElement,
+  ExcalidrawTextElement,
+} from "@excalidraw/element/types";
+
+export type Shape = "rect" | "ellipse" | "diamond";
+export type Direction = "RIGHT" | "DOWN" | "LEFT" | "UP";
+export type Theme = "clean" | "sketch";
+export type LineStyle = "solid" | "dashed" | "dotted";
+
+export type Style = {
+  strokeColor?: string;
+  backgroundColor?: string;
+  fillStyle?: string;
+  strokeStyle?: string;
+  strokeWidth?: number;
+  roughness?: number;
+  opacity?: number;
+};
+
+export type NodeModel = {
+  id: string;
+  label: string;
+  shape: Shape;
+  kind?: string;
+  source?: string;
+  group?: string;
+  color?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  pinned: boolean;
+  style?: Style;
+  /** where the agent last put it */
+  laid?: [number, number];
+};
+
+export type EdgeModel = {
+  id: string;
+  from: string;
+  to: string;
+  label?: string;
+  line?: LineStyle;
+  color?: string;
+  style?: Style;
+  /** absolute route, first and last point on the end boxes' borders */
+  points?: [number, number][];
+};
+
+export type GroupModel = {
+  id: string;
+  label: string;
+  parent?: string;
+  color?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  pinned: boolean;
+  style?: Style;
+  laid?: [number, number];
+};
+
+export type NoteModel = {
+  id: string;
+  text: string;
+  on?: string;
+  color?: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  pinned: boolean;
+};
+
+export type Meta = { direction: Direction; theme: Theme };
+
+export type Model = {
+  meta: Meta;
+  nodes: Map<string, NodeModel>;
+  edges: Map<string, EdgeModel>;
+  groups: Map<string, GroupModel>;
+  notes: Map<string, NoteModel>;
+};
+
+/** What every agent-owned element carries in `customData.gx`. */
+export type GxData =
+  | {
+      role: "node";
+      id: string;
+      shape: Shape;
+      kind?: string;
+      source?: string;
+      group?: string;
+      color?: string;
+      pinned?: boolean;
+      laid?: [number, number];
+      meta?: Meta;
+    }
+  | {
+      role: "edge";
+      id: string;
+      from: string;
+      to: string;
+      line?: LineStyle;
+      color?: string;
+    }
+  | {
+      role: "group";
+      id: string;
+      label: string;
+      parent?: string;
+      color?: string;
+      pinned?: boolean;
+      laid?: [number, number];
+      meta?: Meta;
+    }
+  | {
+      role: "group-label";
+      id: string;
+    }
+  | {
+      role: "note";
+      id: string;
+      on?: string;
+      color?: string;
+      pinned?: boolean;
+      laid?: [number, number];
+    }
+  | { role: "note-link"; id: string };
+
+export const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
+
+export const elementId = {
+  node: (id: string) => `gx-n-${id}`,
+  nodeLabel: (id: string) => `gx-n-${id}-t`,
+  edge: (id: string) => `gx-e-${id}`,
+  edgeLabel: (id: string) => `gx-e-${id}-t`,
+  group: (id: string) => `gx-g-${id}`,
+  groupLabel: (id: string) => `gx-g-${id}-t`,
+  note: (id: string) => `gx-m-${id}`,
+  noteLabel: (id: string) => `gx-m-${id}-t`,
+  noteLink: (id: string) => `gx-ml-${id}`,
+};
+
+export const gxOf = (element: ExcalidrawElement): GxData | null => {
+  const gx = (element.customData as { gx?: GxData } | undefined)?.gx;
+  return gx && typeof gx === "object" && typeof gx.role === "string"
+    ? gx
+    : null;
+};
+
+export const isAgentOwned = (element: ExcalidrawElement) => {
+  if (gxOf(element)) {
+    return true;
+  }
+  // a bound label belongs to whoever owns its container
+  return element.id.startsWith("gx-");
+};
+
+const moved = (
+  element: ExcalidrawElement,
+  gx: { pinned?: boolean; laid?: [number, number] },
+) =>
+  !!gx.pinned ||
+  (!!gx.laid &&
+    (Math.abs(element.x - gx.laid[0]) > 0.5 ||
+      Math.abs(element.y - gx.laid[1]) > 0.5));
+
+const styleOf = (element: ExcalidrawElement): Style => ({
+  strokeColor: element.strokeColor,
+  backgroundColor: element.backgroundColor,
+  fillStyle: element.fillStyle,
+  strokeStyle: element.strokeStyle,
+  strokeWidth: element.strokeWidth,
+  roughness: element.roughness,
+  opacity: element.opacity,
+});
+
+const labelOf = (
+  container: ExcalidrawElement,
+  byId: Map<string, ExcalidrawElement>,
+) => {
+  const bound = container.boundElements?.find((b) => b.type === "text");
+  const text = bound
+    ? (byId.get(bound.id) as ExcalidrawTextElement | undefined)
+    : undefined;
+  return text && !text.isDeleted ? text.originalText ?? text.text : "";
+};
+
+export const emptyModel = (): Model => ({
+  meta: { direction: "RIGHT", theme: "clean" },
+  nodes: new Map(),
+  edges: new Map(),
+  groups: new Map(),
+  notes: new Map(),
+});
+
+export const readModel = (elements: readonly ExcalidrawElement[]): Model => {
+  const model = emptyModel();
+  const live = elements.filter((e) => !e.isDeleted);
+  const byId = new Map(live.map((e) => [e.id, e]));
+  // a group's name as it reads on the canvas (a person may have edited it)
+  const groupNames = new Map<string, string>();
+  for (const element of live) {
+    const gx = gxOf(element);
+    if (gx?.role === "group-label" && element.type === "text") {
+      const text = element as ExcalidrawTextElement;
+      groupNames.set(gx.id, text.originalText ?? text.text);
+    }
+  }
+  let metaFound = false;
+
+  for (const element of live) {
+    const gx = gxOf(element);
+    if (!gx) {
+      continue;
+    }
+    if ((gx.role === "node" || gx.role === "group") && gx.meta && !metaFound) {
+      model.meta = { ...model.meta, ...gx.meta };
+      metaFound = true;
+    }
+    switch (gx.role) {
+      case "node":
+        model.nodes.set(gx.id, {
+          id: gx.id,
+          label: labelOf(element, byId),
+          shape: gx.shape,
+          kind: gx.kind,
+          source: gx.source,
+          group: gx.group,
+          color: gx.color,
+          x: element.x,
+          y: element.y,
+          width: element.width,
+          height: element.height,
+          pinned: moved(element, gx),
+          laid: gx.laid,
+          style: styleOf(element),
+        });
+        break;
+      case "edge":
+        model.edges.set(gx.id, {
+          id: gx.id,
+          from: gx.from,
+          to: gx.to,
+          label: labelOf(element, byId) || undefined,
+          line: gx.line,
+          color: gx.color,
+          style: styleOf(element),
+          points:
+            "points" in element
+              ? (element.points as readonly (readonly [number, number])[]).map(
+                  ([px, py]) =>
+                    [element.x + px, element.y + py] as [number, number],
+                )
+              : undefined,
+        });
+        break;
+      case "group":
+        model.groups.set(gx.id, {
+          id: gx.id,
+          label: groupNames.get(gx.id) || gx.label,
+          parent: gx.parent,
+          color: gx.color,
+          x: element.x,
+          y: element.y,
+          width: element.width,
+          height: element.height,
+          pinned: moved(element, gx),
+          laid: gx.laid,
+          style: styleOf(element),
+        });
+        break;
+      case "note":
+        model.notes.set(gx.id, {
+          id: gx.id,
+          text: labelOf(element, byId),
+          on: gx.on,
+          color: gx.color,
+          x: element.x,
+          y: element.y,
+          width: element.width,
+          height: element.height,
+          pinned: moved(element, gx),
+        });
+        break;
+    }
+  }
+  followMovedGroups(model);
+  return model;
+};
+
+/**
+ * A person who drags a group's box means the group: everything inside that
+ * they did not move themselves comes along by the same distance.
+ */
+export const followMovedGroups = (model: Model) => {
+  const inside = (groupId: string | undefined, root: string): boolean => {
+    for (let cursor = groupId, n = 0; cursor && n < 50; n++) {
+      if (cursor === root) {
+        return true;
+      }
+      cursor = model.groups.get(cursor)?.parent;
+    }
+    return false;
+  };
+  const unmoved = (item: { x?: number; y?: number; laid?: [number, number] }) =>
+    !!item.laid &&
+    item.x !== undefined &&
+    Math.abs(item.x - item.laid[0]) <= 0.5 &&
+    Math.abs(item.y! - item.laid[1]) <= 0.5;
+
+  for (const group of model.groups.values()) {
+    if (!group.laid || group.x === undefined || unmoved(group)) {
+      continue;
+    }
+    const dx = group.x - group.laid[0];
+    const dy = group.y! - group.laid[1];
+    let carried = 0;
+    for (const node of model.nodes.values()) {
+      if (inside(node.group, group.id) && unmoved(node)) {
+        node.x! += dx;
+        node.y! += dy;
+        node.laid = [node.x!, node.y!];
+        node.pinned = true;
+        carried++;
+      }
+    }
+    for (const child of model.groups.values()) {
+      if (child !== group && inside(child.parent, group.id) && unmoved(child)) {
+        child.x! += dx;
+        child.y! += dy;
+        child.laid = [child.x!, child.y!];
+        child.pinned = true;
+      }
+    }
+    group.laid = [group.x, group.y!];
+    group.pinned = true;
+    if (carried) {
+      // routes into the group no longer start where they did
+      for (const edge of model.edges.values()) {
+        const ends = [edge.from, edge.to].map(
+          (id) => model.nodes.get(id)?.group,
+        );
+        if (ends.some((g) => inside(g, group.id))) {
+          edge.points = undefined;
+        }
+      }
+    }
+  }
+};
+
+/** Whether a person moved a group box and its contents have not followed yet. */
+export const hasUnfollowedGroupMove = (
+  elements: readonly ExcalidrawElement[],
+) =>
+  elements.some((element) => {
+    const gx = gxOf(element);
+    return (
+      !element.isDeleted &&
+      gx?.role === "group" &&
+      !!gx.laid &&
+      (Math.abs(element.x - gx.laid[0]) > 0.5 ||
+        Math.abs(element.y - gx.laid[1]) > 0.5)
+    );
+  });
