@@ -295,6 +295,16 @@ export const readModel = (elements: readonly ExcalidrawElement[]): Model => {
     }
   }
   followMovedGroups(model);
+  // a box a person placed is no longer where ELK routed to: its arrows become
+  // elbow arrows the editor routes (and re-routes as the box is dragged)
+  for (const edge of model.edges.values()) {
+    if (
+      model.nodes.get(edge.from)?.pinned ||
+      model.nodes.get(edge.to)?.pinned
+    ) {
+      edge.points = undefined;
+    }
+  }
   return model;
 };
 
@@ -358,17 +368,24 @@ export const followMovedGroups = (model: Model) => {
   }
 };
 
-/** Whether a person moved a group box and its contents have not followed yet. */
-export const hasUnfollowedGroupMove = (
-  elements: readonly ExcalidrawElement[],
-) =>
+/**
+ * Whether a person's drag needs the drawing settled: a group box moved (its
+ * contents follow) or a box moved for the first time (its arrows turn into
+ * editor-routed ones).
+ */
+export const needsSettling = (elements: readonly ExcalidrawElement[]) =>
   elements.some((element) => {
     const gx = gxOf(element);
-    return (
-      !element.isDeleted &&
-      gx?.role === "group" &&
-      !!gx.laid &&
-      (Math.abs(element.x - gx.laid[0]) > 0.5 ||
-        Math.abs(element.y - gx.laid[1]) > 0.5)
-    );
+    if (
+      element.isDeleted ||
+      !gx ||
+      (gx.role !== "group" && gx.role !== "node") ||
+      !gx.laid
+    ) {
+      return false;
+    }
+    const movedNow =
+      Math.abs(element.x - gx.laid[0]) > 0.5 ||
+      Math.abs(element.y - gx.laid[1]) > 0.5;
+    return movedNow && (gx.role === "group" || !gx.pinned);
   });

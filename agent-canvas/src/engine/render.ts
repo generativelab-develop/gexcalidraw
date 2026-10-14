@@ -9,15 +9,26 @@ import {
   getLineHeight,
   randomInteger,
 } from "@excalidraw/common";
-import { measureText } from "@excalidraw/element";
+import {
+  measureText,
+  redrawTextBoundingBox,
+  Scene,
+  updateElbowArrowPoints,
+} from "@excalidraw/element";
+import { pointFrom } from "@excalidraw/math";
 import { convertToExcalidrawElements, Fonts } from "@excalidraw/excalidraw";
 
 import type { ExcalidrawElementSkeleton } from "@excalidraw/element";
 
 import type {
+  ExcalidrawElbowArrowElement,
   ExcalidrawElement,
   ExcalidrawTextElement,
+  FixedPoint,
+  FixedPointBinding,
+  NonDeletedSceneElementsMap,
 } from "@excalidraw/element/types";
+import type { LocalPoint } from "@excalidraw/math";
 
 import { closestEdgePoint, centerOf, straightRoute } from "./geometry";
 import { GROUP_PAD } from "./layout";
@@ -229,6 +240,8 @@ export const buildElements = (
   const gxById = new Map<string, GxData>();
   const meta = { ...model.meta };
 
+  const elbows: string[] = [];
+
   const add = (skeleton: ExcalidrawElementSkeleton, gx?: GxData) => {
     skeletons.push(skeleton);
     if (gx && skeleton.id) {
@@ -356,10 +369,13 @@ export const buildElements = (
       continue;
     }
     const color = colorFor(edge.color) ?? { stroke: "#495057", fill: "" };
-    const route =
-      edge.points?.length && edge.points.length >= 2
-        ? edge.points
-        : straightRoute(from as Box, to as Box);
+    // ELK's route when the layout made one; otherwise an elbow arrow the
+    // editor routes, and keeps routing while a person drags its boxes
+    const routed = !!edge.points && edge.points.length >= 2;
+    if (!routed) {
+      elbows.push(edge.id);
+    }
+    const route = routed ? edge.points! : straightRoute(from as Box, to as Box);
     const [ox, oy] = route[0];
     const rel = route.map(([px, py]) => [px - ox, py - oy]);
     const xs = rel.map((p) => p[0]);
@@ -438,6 +454,7 @@ export const buildElements = (
   let elements = convertToExcalidrawElements(skeletons, {
     regenerateIds: false,
   }) as ExcalidrawElement[];
+  elements = routeElbows(elements, model, elbows);
 
   // note links: a thin dashed line from the note to what it is about, drawn
   // after conversion because a sticky note is not an arrow binding target
@@ -507,6 +524,101 @@ export const buildElements = (
   });
 
   return { elements, warnings };
+};
+
+/** The sides two boxes face each other with, as fixed points. */
+const facingSides = (a: Box, b: Box): [FixedPoint, FixedPoint] => {
+  const [ax, ay] = centerOf(a);
+  const [bx, by] = centerOf(b);
+  const gapX = Math.abs(bx - ax) - (a.width + b.width) / 2;
+  const gapY = Math.abs(by - ay) - (a.height + b.height) / 2;
+  if (gapX >= gapY) {
+    return bx >= ax
+      ? [[1, 0.5] as FixedPoint, [0, 0.5] as FixedPoint]
+      : [[0, 0.5] as FixedPoint, [1, 0.5] as FixedPoint];
+  }
+  return by >= ay
+    ? [[0.5, 1] as FixedPoint, [0.5, 0] as FixedPoint]
+    : [[0.5, 0] as FixedPoint, [0.5, 1] as FixedPoint];
+};
+
+/** Turns the listed edges into elbow arrows routed by the editor's own code. */
+const routeElbows = (
+  elements: ExcalidrawElement[],
+  model: Model,
+  edgeIds: string[],
+): ExcalidrawElement[] => {
+  if (!edgeIds.length) {
+    return elements;
+  }
+  const map = new Map(
+    elements.map((e) => [e.id, { ...e } as ExcalidrawElement]),
+  );
+  const elementsMap = map as unknown as NonDeletedSceneElementsMap;
+  const labelled: [string, string][] = [];
+  for (const id of edgeIds) {
+    const edge = model.edges.get(id)!;
+    const arrow = map.get(elementId.edge(id));
+    const a = map.get(elementId.node(edge.from));
+    const b = map.get(elementId.node(edge.to));
+    if (!arrow || !a || !b) {
+      continue;
+    }
+    const [startPoint, endPoint] = facingSides(a, b);
+    const start = [
+      a.x + a.width * startPoint[0],
+      a.y + a.height * startPoint[1],
+    ];
+    const end = [b.x + b.width * endPoint[0], b.y + b.height * endPoint[1]];
+    const startBinding: FixedPointBinding = {
+      elementId: a.id,
+      fixedPoint: startPoint,
+      mode: "orbit",
+    };
+    const endBinding: FixedPointBinding = {
+      elementId: b.id,
+      fixedPoint: endPoint,
+      mode: "orbit",
+    };
+    const points = [
+      pointFrom<LocalPoint>(0, 0),
+      pointFrom<LocalPoint>(end[0] - start[0], end[1] - start[1]),
+    ];
+    const base = {
+      ...arrow,
+      x: start[0],
+      y: start[1],
+      points,
+      elbowed: true,
+      roundness: null,
+      fixedSegments: null,
+      startIsSpecial: null,
+      endIsSpecial: null,
+      startBinding,
+      endBinding,
+    } as unknown as ExcalidrawElbowArrowElement;
+    map.set(arrow.id, {
+      ...base,
+      ...updateElbowArrowPoints(base, elementsMap, {
+        points,
+        startBinding,
+        endBinding,
+      }),
+    } as ExcalidrawElement);
+    if (edge.label) {
+      labelled.push([arrow.id, elementId.edgeLabel(id)]);
+    }
+  }
+  // labels sit on the middle of the new route
+  const scene = new Scene(elementsMap);
+  for (const [arrowId, textId] of labelled) {
+    const text = map.get(textId) as ExcalidrawTextElement | undefined;
+    const arrow = map.get(arrowId);
+    if (text && arrow) {
+      redrawTextBoundingBox(text, arrow as never, scene);
+    }
+  }
+  return elements.map((e) => scene.getElement(e.id) ?? map.get(e.id)!);
 };
 
 const mergeBound = (

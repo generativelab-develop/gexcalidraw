@@ -27,7 +27,7 @@ gexcal CLI ──HTTP (loopback, token)──▶ server (Vite + bridge) ──Vi
 - **The file is the source of truth.** The server reads it at start, writes every change the canvas sends, keeps the previous version under `~/.gexcal/revisions/` (`gexcal revisions`, `gexcal restore`), and pushes an edit made to the file by anything else to every open canvas.
 - **The canvas page is the engine.** Agent requests run inside a real Excalidraw page, so measurement, arrow binding and export are exactly the editor's. When no browser tab is open, the server starts a headless Chrome/Chromium as the engine (`GEXCAL_CHROME` overrides the binary); when a person opens the canvas, their tab takes over.
 - **The model lives in the scene.** Every element the agent owns carries `customData.gx` (its id, role, kind, source path, where the layout last put it), so the agent's view is read back from the scene each time, including what a person changed. Elements without it are the person's and are never touched.
-- **Placement**: ELK `layered` with compound groups and orthogonal routing while nothing is hand-placed; afterwards only new elements are placed. Notes are placed afterwards, clear of boxes, arrows and arrow labels.
+- **Placement**: ELK `layered` with compound groups and orthogonal routing while nothing is hand-placed; afterwards only new elements are placed, and arrows touching hand-placed boxes become elbow arrows routed by the editor (`updateElbowArrowPoints`), which keep re-routing while a person drags. Notes are placed afterwards, clear of boxes, arrows and arrow labels.
 
 State lives in `~/.gexcal/` (`GEXCAL_HOME` overrides): `server.json` (port, pid, API token, mode 0600), `server.log`, `revisions/`.
 

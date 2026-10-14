@@ -22,7 +22,7 @@ import type { ExcalidrawElement } from "@excalidraw/element/types";
 import type { RemoteExcalidrawElement } from "@excalidraw/excalidraw/data/reconcile";
 
 import { Engine } from "./engine/engine";
-import { hasUnfollowedGroupMove } from "./engine/model";
+import { needsSettling } from "./engine/model";
 import { isOpError } from "./engine/ops";
 
 const headless =
@@ -77,9 +77,10 @@ class Bridge {
       }),
       api.onPointerUp(() => {
         this.lastUserActivity = Date.now();
-        // a group box was dragged: bring what is inside it along
+        // a group box was dragged (its contents follow) or a box was placed
+        // by hand for the first time (its arrows get re-routed)
         setTimeout(() => {
-          if (hasUnfollowedGroupMove(this.api.getSceneElements())) {
+          if (needsSettling(this.api.getSceneElements())) {
             this.engine
               .apply([])
               .then(() => this.save())

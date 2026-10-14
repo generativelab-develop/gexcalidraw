@@ -69,6 +69,7 @@ A batch is all-or-nothing: an op that names a missing node/group, reuses an id f
 - While nobody has moved anything by hand, every batch re-lays out the whole diagram, so it stays tidy as it grows.
 - Once a person moves a box, that box is **hand-placed**: from then on only new things are placed (next to a connected neighbour, in a free spot) and nothing hand-placed moves. `gexcal layout` re-lays out everything if the person asks for it; `gexcal layout --keep-pinned` tidies the rest only.
 - Dragging a group box moves what is inside it.
+- Arrows routed by the layout avoid every box. An arrow touching a hand-placed box, or added after something was hand-placed, is an elbow arrow the editor routes, and it re-routes as the box is dragged.
 - Notes are placed in the first spot that covers no box, arrow or arrow label; `note-over-edge` and `overlap` say when no such spot was found.
 
 ## Reading what the person did

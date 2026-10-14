@@ -99,6 +99,29 @@ check(
   /daemon .*\[hand-placed\]/.test(described),
   "the agent sees the moved box as hand-placed",
 );
+const arrow = await page.evaluate(() => {
+  const a = window.gexcal.api
+    .getSceneElements()
+    .find((e) => e.id === "gx-e-portal->daemon");
+  const orthogonal = a.points
+    .slice(1)
+    .every((p, i) => p[0] === a.points[i][0] || p[1] === a.points[i][1]);
+  return {
+    elbowed: a.elbowed,
+    orthogonal,
+    start: a.startBinding?.elementId,
+    end: a.endBinding?.elementId,
+  };
+});
+check(
+  arrow.elbowed &&
+    arrow.orthogonal &&
+    arrow.start === "gx-n-portal" &&
+    arrow.end === "gx-n-daemon",
+  `the moved box's arrow became an attached, editor-routed elbow arrow (${JSON.stringify(
+    arrow,
+  )})`,
+);
 const moved = await page.evaluate(() => {
   const el = window.gexcal.api
     .getSceneElements()
