@@ -73,7 +73,13 @@ export const toBase64 = async (arrayBuffer: ArrayBuffer) => {
     // it's perfectly fine to treat each byte independently,
     // as we care only about turning individual bytes into codepoints,
     // not about multi-byte unicode characters
-    const byteString = String.fromCharCode(...new Uint8Array(arrayBuffer));
+    // gexcalidraw: in slices, as spreading a whole font (a Hangul face is
+    // several hundred kilobytes) into one call exceeds the argument limit
+    const bytes = new Uint8Array(arrayBuffer);
+    let byteString = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      byteString += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
     base64 = btoa(byteString);
   }
 

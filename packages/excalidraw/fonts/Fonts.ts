@@ -33,6 +33,12 @@ import type { Scene } from "@excalidraw/element";
 
 import { CascadiaFontFaces } from "./Cascadia";
 import { ComicShannsFontFaces } from "./ComicShanns";
+import { D2CodingFontFaces } from "./D2Coding";
+import { GaeguFontFaces } from "./Gaegu";
+import { GowunDodumFontFaces } from "./GowunDodum";
+import { JuaFontFaces } from "./Jua";
+import { NanumPenScriptFontFaces } from "./NanumPenScript";
+import { PretendardFontFaces } from "./Pretendard";
 import { EmojiFontFaces } from "./Emoji";
 import { ExcalidrawFontFace } from "./ExcalidrawFontFace";
 import { ExcalifontFontFaces } from "./Excalifont";
@@ -42,6 +48,10 @@ import { LilitaFontFaces } from "./Lilita";
 import { NunitoFontFaces } from "./Nunito";
 import { VirgilFontFaces } from "./Virgil";
 import { XiaolaiFontFaces } from "./Xiaolai";
+
+// gexcalidraw: Hangul syllables and jamo, the characters a Hangul fallback draws
+const HANGUL_REGEX = /[\u1100-\u11FF\u3130-\u318F\uA960-\uA97F\uAC00-\uD7FF]/;
+const containsHangul = (text: string) => HANGUL_REGEX.test(text);
 
 export class Fonts {
   // it's ok to track fonts across multiple instances only once, so let's use
@@ -202,6 +212,28 @@ export class Fonts {
         // the order between the families and fallbacks is important, as fallbacks need to be defined first and in the reversed order
         // so that they get overriden with the later defined font faces, i.e. in case they share some codepoints
         families.unshift(FONT_FAMILY_FALLBACKS[CJK_HAND_DRAWN_FALLBACK_FONT]);
+      }
+    }
+
+    // gexcalidraw: a family whose text holds Hangul carries its Hangul
+    // fallback's face too, with the same characters, defined before it
+    for (const family of [...families]) {
+      const characters = Fonts.getCharacters(charsPerFamily, family);
+      if (!containsHangul(characters)) {
+        continue;
+      }
+      for (const name of getFontFamilyFallbacks(family)) {
+        const fallback = FONT_FAMILY[name as keyof typeof FONT_FAMILY];
+        if (fallback === undefined) {
+          continue;
+        }
+        const chars = (charsPerFamily[fallback] ??= new Set());
+        for (const char of characters) {
+          chars.add(char);
+        }
+        if (!families.includes(fallback)) {
+          families.unshift(fallback);
+        }
       }
     }
 
@@ -405,6 +437,15 @@ export class Fonts {
     init("Lilita One", ...LilitaFontFaces);
     init("Nunito", ...NunitoFontFaces);
     init("Virgil", ...VirgilFontFaces);
+
+    // gexcalidraw: faces that draw Hangul, each also a fallback of an
+    // upstream family (HANGUL_FALLBACK_FONT)
+    init("Pretendard", ...PretendardFontFaces);
+    init("Gaegu", ...GaeguFontFaces);
+    init("Nanum Pen Script", ...NanumPenScriptFontFaces);
+    init("Gowun Dodum", ...GowunDodumFontFaces);
+    init("Jua", ...JuaFontFaces);
+    init("D2Coding", ...D2CodingFontFaces);
 
     // fallback font faces
     init(CJK_HAND_DRAWN_FALLBACK_FONT, ...XiaolaiFontFaces);

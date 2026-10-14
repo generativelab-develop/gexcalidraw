@@ -151,6 +151,34 @@ export const FONT_FAMILY = {
   "Comic Shanns": 8,
   "Liberation Sans": 9,
   Assistant: 10,
+  // gexcalidraw: faces that draw Hangul. Numbered apart from upstream's ids,
+  // which a scene stores, so an upstream font added later cannot take one.
+  Pretendard: 31,
+  Gaegu: 32,
+  "Nanum Pen Script": 33,
+  "Gowun Dodum": 34,
+  Jua: 35,
+  D2Coding: 36,
+};
+
+/**
+ * gexcalidraw: the Hangul face each upstream family falls back to, chosen to
+ * match its style (hand-drawn, plain, heading, code), so Korean in a scene
+ * keeps the look of the family it was written in. It comes first among the
+ * fallbacks: the family's own face still draws every character it has.
+ */
+export const HANGUL_FALLBACK_FONT: Readonly<
+  Partial<Record<number, keyof typeof FONT_FAMILY>>
+> = {
+  [FONT_FAMILY.Excalifont]: "Gaegu",
+  [FONT_FAMILY.Virgil]: "Gaegu",
+  [FONT_FAMILY.Nunito]: "Pretendard",
+  [FONT_FAMILY.Helvetica]: "Pretendard",
+  [FONT_FAMILY["Liberation Sans"]]: "Pretendard",
+  [FONT_FAMILY.Assistant]: "Pretendard",
+  [FONT_FAMILY["Lilita One"]]: "Jua",
+  [FONT_FAMILY["Comic Shanns"]]: "D2Coding",
+  [FONT_FAMILY.Cascadia]: "D2Coding",
 };
 
 // Segoe UI Emoji fails to properly fallback for some glyphs: ∞, ∫, ≠
@@ -175,6 +203,7 @@ export function getGenericFontFamilyFallback(
   switch (fontFamily) {
     case FONT_FAMILY.Cascadia:
     case FONT_FAMILY["Comic Shanns"]:
+    case FONT_FAMILY.D2Coding:
       return MONOSPACE_GENERIC_FONT;
 
     default:
@@ -184,18 +213,21 @@ export function getGenericFontFamilyFallback(
 
 export const getFontFamilyFallbacks = (
   fontFamily: number,
-): Array<keyof typeof FONT_FAMILY_FALLBACKS> => {
+): Array<keyof typeof FONT_FAMILY_FALLBACKS | keyof typeof FONT_FAMILY> => {
   const genericFallbackFont = getGenericFontFamilyFallback(fontFamily);
+  const hangul = HANGUL_FALLBACK_FONT[fontFamily];
+  const lead = hangul ? [hangul] : [];
 
   switch (fontFamily) {
     case FONT_FAMILY.Excalifont:
       return [
+        ...lead,
         CJK_HAND_DRAWN_FALLBACK_FONT,
         genericFallbackFont,
         WINDOWS_EMOJI_FALLBACK_FONT,
       ];
     default:
-      return [genericFallbackFont, WINDOWS_EMOJI_FALLBACK_FONT];
+      return [...lead, genericFallbackFont, WINDOWS_EMOJI_FALLBACK_FONT];
   }
 };
 

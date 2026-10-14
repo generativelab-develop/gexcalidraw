@@ -4,6 +4,22 @@ import { subsetWoff2GlyphsByCodepoints } from "../subset/subset-main";
 
 type DataURL = string;
 
+const decodeDataUrl = (dataUrl: DataURL): ArrayBuffer => {
+  const comma = dataUrl.indexOf(",");
+  const meta = dataUrl.slice(0, comma);
+  const body = dataUrl.slice(comma + 1);
+  if (!meta.endsWith(";base64")) {
+    return new TextEncoder().encode(decodeURIComponent(body))
+      .buffer as ArrayBuffer;
+  }
+  const binary = atob(body);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+};
+
 export class ExcalidrawFontFace {
   public readonly urls: URL[] | DataURL[];
   public readonly fontFace: FontFace;
@@ -89,6 +105,13 @@ export class ExcalidrawFontFace {
 
   public fetchFont(url: URL | DataURL): Promise<ArrayBuffer> {
     return promiseTry(async () => {
+      // gexcalidraw: a font inside the bundle is decoded where it is, so a
+      // host whose connect-src admits only its own origin can still export
+      // (fetching a data: URL is a connection that policy refuses)
+      if (typeof url === "string" && url.startsWith("data:")) {
+        return decodeDataUrl(url);
+      }
+
       const response = await fetch(url, {
         // always prefer cache (even stale), otherwise it always triggers an unnecessary validation request
         // which we don't need as we are controlling freshness of the fonts with the stable hash suffix in the url

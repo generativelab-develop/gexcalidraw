@@ -28,4 +28,4 @@ html
 meta*.json
 .claude
 agent-canvas/dist-embed
-agent-canvas/embed-e2e.png
+agent-canvas/embed-*.png

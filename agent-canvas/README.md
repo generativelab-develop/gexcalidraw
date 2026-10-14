@@ -43,7 +43,7 @@ Without `GEXCAL_DEV=1` the server does not watch sources, so an open canvas is n
 
 ## Embedding the canvas
 
-`yarn --cwd agent-canvas build:embed` builds `src/embed.tsx` into `agent-canvas/dist-embed/`: `plan-canvas.js` (one ES module, React and the fonts included, no dynamic import, no network reference) and `plan-canvas.css`. A host page serves both from its own origin and calls
+`yarn --cwd agent-canvas build:embed` builds `src/embed.tsx` into `agent-canvas/dist-embed/`: `plan-canvas.js` (one ES module, React and the Latin fonts included, no dynamic import, no network reference), `plan-canvas.css` and `fonts/` (the Hangul faces, below). A host page serves the directory from its own origin and calls
 
 ```js
 const canvas = await mountPlanCanvas(element, { theme, langCode: "ko-KR", onSave });
@@ -51,4 +51,19 @@ canvas.load(sceneText, { fresh: true });     // a file just opened
 await canvas.request("apply", { ops });      // { ok, result } or { ok: false, error }
 ```
 
-The host owns the file: it loads scenes in, writes what `onSave` hands it, and relays agent requests (`apply`, `mermaid`, `describe`, `export`, `fit`, `undo`) to `request`. The same `CanvasSession` (`src/session.ts`) runs behind the dev server's page, so both behave alike. The build leaves out the hand-drawn CJK font (Xiaolai, ~13 MB); CJK text falls back to the system font. `node agent-canvas/test/embed.e2e.mjs` checks the build under a strict same-origin Content-Security-Policy.
+The host owns the file: it loads scenes in, writes what `onSave` hands it, and relays agent requests (`apply`, `mermaid`, `describe`, `export`, `fit`, `undo`) to `request`. The same `CanvasSession` (`src/session.ts`) runs behind the dev server's page, so both behave alike. The build leaves out the hand-drawn CJK font (Xiaolai, ~13 MB) and glyph subsetting, whose WebAssembly a host without `wasm-unsafe-eval` refuses, so an SVG export carries each font face whole. `node agent-canvas/test/embed.e2e.mjs` checks the build under a strict same-origin Content-Security-Policy.
+
+### Korean
+
+The fork adds six faces that draw Hangul. All six are in the font picker; four are also the fallback of upstream families in the same style, so Korean keeps the look of the text around it (`HANGUL_FALLBACK_FONT`, packages/common/src/constants.ts):
+
+| Face | Style | Falls back for | Licence |
+| --- | --- | --- | --- |
+| Gaegu | hand-drawn (marker) | Excalifont, Virgil | OFL 1.1 |
+| Nanum Pen Script | hand-drawn (pen) | — | OFL 1.1 |
+| Pretendard | plain | Nunito, Helvetica, Liberation Sans, Assistant | OFL 1.1 |
+| Gowun Dodum | plain (soft) | — | OFL 1.1 |
+| Jua | heading | Lilita One | OFL 1.1 |
+| D2Coding | code | Comic Shanns, Cascadia | OFL 1.1 |
+
+Each lives in `packages/excalidraw/fonts/<Face>/` as one woff2 with its `OFL.txt`. Gaegu and Jua cover the 2,350 syllables of KS X 1001; the others all 11,172. The embed build writes them to `dist-embed/fonts/` beside the module rather than into it: the browser fetches one only when its characters are on the canvas.

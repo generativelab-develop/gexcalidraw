@@ -111,6 +111,55 @@ export const FONT_METADATA: Record<number, FontMetadata> = {
     },
     private: true,
   },
+  // gexcalidraw's Hangul faces: hhea metrics read from each file
+  [FONT_FAMILY.Pretendard]: {
+    metrics: {
+      unitsPerEm: 2048,
+      ascender: 1950,
+      descender: -494,
+      lineHeight: 1.25,
+    },
+  },
+  [FONT_FAMILY.Gaegu]: {
+    metrics: {
+      unitsPerEm: 1000,
+      ascender: 760,
+      descender: -240,
+      lineHeight: 1.25,
+    },
+  },
+  [FONT_FAMILY["Nanum Pen Script"]]: {
+    metrics: {
+      unitsPerEm: 1000,
+      ascender: 800,
+      descender: -200,
+      lineHeight: 1.25,
+    },
+  },
+  [FONT_FAMILY["Gowun Dodum"]]: {
+    metrics: {
+      unitsPerEm: 1000,
+      ascender: 1160,
+      descender: -288,
+      lineHeight: 1.25,
+    },
+  },
+  [FONT_FAMILY.Jua]: {
+    metrics: {
+      unitsPerEm: 1000,
+      ascender: 800,
+      descender: -200,
+      lineHeight: 1.25,
+    },
+  },
+  [FONT_FAMILY.D2Coding]: {
+    metrics: {
+      unitsPerEm: 1000,
+      ascender: 850,
+      descender: -230,
+      lineHeight: 1.25,
+    },
+  },
   [FONT_FAMILY_FALLBACKS.Xiaolai]: {
     metrics: {
       unitsPerEm: 1000,

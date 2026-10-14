@@ -73,10 +73,12 @@ const server = http.createServer((req, res) => {
     res.writeHead(404);
     return res.end();
   }
-  send(
-    name.endsWith(".css") ? "text/css" : "text/javascript",
-    fs.readFileSync(file),
-  );
+  const type = name.endsWith(".css")
+    ? "text/css"
+    : name.endsWith(".woff2")
+    ? "font/woff2"
+    : "text/javascript";
+  send(type, fs.readFileSync(file));
 });
 await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const url = `http://127.0.0.1:${server.address().port}/`;
@@ -117,9 +119,7 @@ const drew = await page.evaluate(() =>
 );
 check(drew.ok, `the canvas draws through request (${JSON.stringify(drew)})`);
 
-const described = await page.evaluate(() =>
-  window.canvas.request("describe"),
-);
+const described = await page.evaluate(() => window.canvas.request("describe"));
 check(
   described.ok && /issues:?\s*none/.test(described.result.text ?? ""),
   "describe reports the drawing without layout issues",
@@ -146,15 +146,105 @@ const mermaid = await page.evaluate(() =>
     prefix: "m-",
   }),
 );
-check(mermaid.ok, `Mermaid draws under the policy (${JSON.stringify(mermaid).slice(0, 120)})`);
+check(
+  mermaid.ok,
+  `Mermaid draws under the policy (${JSON.stringify(mermaid).slice(0, 120)})`,
+);
 
 const exported = await page.evaluate(() =>
   window.canvas.request("export", { format: "png" }),
 );
 check(
-  exported.ok && exported.result.encoding === "base64" && exported.result.data.length > 1000,
+  exported.ok &&
+    exported.result.encoding === "base64" &&
+    exported.result.data.length > 1000,
   "export returns a PNG",
 );
+
+// Korean is drawn in the Hangul face its family falls back to (the clean
+// theme writes Nunito, whose fallback is Pretendard), fetched from
+// dist-embed/fonts/ on the same origin
+await page
+  .waitForFunction(
+    () =>
+      [...document.fonts].some(
+        (f) =>
+          f.family.replace(/"/g, "") === "Pretendard" && f.status === "loaded",
+      ),
+    null,
+    { timeout: 15000 },
+  )
+  .catch(() => {});
+const loaded = await page.evaluate(() =>
+  [...document.fonts]
+    .filter((f) => f.status === "loaded")
+    .map((f) => f.family.replace(/"/g, "")),
+);
+check(
+  loaded.includes("Pretendard"),
+  `Korean text loads the Hangul face (${[...new Set(loaded)].join(", ")})`,
+);
+
+const svg = await page.evaluate(() =>
+  window.canvas.request("export", { format: "svg" }),
+);
+const svgText = JSON.stringify(svg.result ?? {});
+check(
+  svg.ok && /font-family: Pretendard/.test(svgText),
+  "an SVG export carries the Hangul face its Korean text is drawn in",
+);
+
+// the sketch theme writes Excalifont, whose Hangul fallback is hand-drawn
+const sketched = await page.evaluate(() =>
+  window.canvas.request("apply", { ops: [{ op: "meta", theme: "sketch" }] }),
+);
+await page
+  .waitForFunction(
+    () =>
+      [...document.fonts].some(
+        (f) => f.family.replace(/"/g, "") === "Gaegu" && f.status === "loaded",
+      ),
+    null,
+    { timeout: 15000 },
+  )
+  .catch(() => {});
+const handLoaded = await page.evaluate(() =>
+  [...document.fonts].some(
+    (f) => f.family.replace(/"/g, "") === "Gaegu" && f.status === "loaded",
+  ),
+);
+check(
+  sketched.ok && handLoaded,
+  "the sketch theme draws Korean in the hand-drawn Hangul face",
+);
+await page.screenshot({ path: path.join(dist, "..", "embed-sketch.png") });
+
+// the font picker offers every Hangul face
+await page.mouse.click(600, 400);
+await page.keyboard.press("ControlOrMeta+a");
+await page.click("[data-testid=font-family-show-fonts]");
+await page
+  .waitForSelector(".dropdown-menu.fonts", { timeout: 5000 })
+  .catch(() => {});
+const listed = await page.evaluate(
+  () => document.querySelector(".dropdown-menu.fonts")?.textContent ?? "",
+);
+const faces = [
+  "Pretendard",
+  "Gaegu",
+  "Nanum Pen Script",
+  "Gowun Dodum",
+  "Jua",
+  "D2Coding",
+];
+check(
+  faces.every((face) => listed.includes(face)),
+  `the font picker lists the Hangul faces (${listed
+    .replace(/\s+/g, " ")
+    .slice(0, 200)})`,
+);
+await page.screenshot({ path: path.join(dist, "..", "embed-fonts.png") });
+await page.keyboard.press("Escape");
 
 await page.screenshot({ path: path.join(dist, "..", "embed-e2e.png") });
 check(

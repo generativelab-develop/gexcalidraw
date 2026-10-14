@@ -79,14 +79,20 @@ export const getFontFamilyIcon = (
   switch (fontFamily) {
     case FONT_FAMILY.Excalifont:
     case FONT_FAMILY.Virgil:
+    case FONT_FAMILY.Gaegu:
+    case FONT_FAMILY["Nanum Pen Script"]:
       return FreedrawIcon;
     case FONT_FAMILY.Nunito:
     case FONT_FAMILY.Helvetica:
+    case FONT_FAMILY.Pretendard:
+    case FONT_FAMILY["Gowun Dodum"]:
       return FontFamilyNormalIcon;
     case FONT_FAMILY["Lilita One"]:
+    case FONT_FAMILY.Jua:
       return FontFamilyHeadingIcon;
     case FONT_FAMILY["Comic Shanns"]:
     case FONT_FAMILY.Cascadia:
+    case FONT_FAMILY.D2Coding:
       return FontFamilyCodeIcon;
     default:
       return FontFamilyNormalIcon;
