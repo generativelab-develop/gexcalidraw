@@ -12,6 +12,7 @@ import type {
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 
 import { describeScene } from "./describe";
+import { mermaidToOps } from "./mermaid";
 import { fullLayout, incrementalLayout, placeNotes } from "./layout";
 import { elementId, isAgentOwned, readModel } from "./model";
 import { applyOps } from "./ops";
@@ -21,6 +22,7 @@ import {
   measureEdgeLabel,
   measureNode,
   measureNote,
+  nodeShape,
 } from "./render";
 
 import type { Size } from "./layout";
@@ -107,16 +109,25 @@ export class Engine {
       );
     }
 
+    const outlines = new Map(
+      [...model.nodes.values()].map((n) => [n.id, nodeShape(n)] as const),
+    );
     const handPlaced =
       [...model.nodes.values()].some((n) => n.pinned) ||
       [...model.groups.values()].some((g) => g.pinned);
     let layout: ApplyResult["layout"];
     if (outcome.layout) {
-      await fullLayout(model, sizes, edgeLabels, outcome.layout);
+      await fullLayout(model, sizes, edgeLabels, {
+        ...outcome.layout,
+        outlines,
+      });
       layout = "full";
     } else if (!handPlaced) {
       // nobody has arranged anything by hand yet: keep the whole drawing tidy
-      await fullLayout(model, sizes, edgeLabels, { keepPinned: false });
+      await fullLayout(model, sizes, edgeLabels, {
+        keepPinned: false,
+        outlines,
+      });
       layout = "full";
     } else {
       incrementalLayout(model, sizes);
@@ -155,6 +166,18 @@ export class Engine {
       warnings: [...outcome.warnings, ...warnings],
       description: describeScene([...agent, ...others]).text,
     };
+  }
+
+  /** A Mermaid flowchart, as ops; applied unless only the ops are wanted. */
+  async mermaid(
+    definition: string,
+    opts: { prefix?: string; print?: boolean },
+  ) {
+    const ops = await mermaidToOps(definition, opts.prefix ?? "");
+    if (opts.print) {
+      return { ops };
+    }
+    return { ops, applied: await this.apply(ops) };
   }
 
   describe() {

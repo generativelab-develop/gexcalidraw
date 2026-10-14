@@ -14,13 +14,14 @@
 import ELK from "elkjs/lib/elk.bundled.js";
 
 import {
+  fitRouteToOutlines,
   labelBoxOnRoute,
   overlaps,
   routeHitsBox,
   straightRoute,
 } from "./geometry";
 
-import type { Box, Point } from "./geometry";
+import type { Box, Outline, Point } from "./geometry";
 import type { Direction, Model } from "./model";
 
 export type Size = { width: number; height: number };
@@ -112,7 +113,7 @@ export const fullLayout = async (
   model: Model,
   sizes: Map<string, Size>,
   edgeLabelSizes: Map<string, Size>,
-  opts: { keepPinned: boolean },
+  opts: { keepPinned: boolean; outlines?: Map<string, Outline> },
 ) => {
   const direction: Direction = model.meta.direction;
   const before = bounds(
@@ -244,6 +245,12 @@ export const fullLayout = async (
       ...(section.bendPoints ?? []),
       section.endPoint,
     ].map((p) => [origin.x + p.x, origin.y + p.y] as [number, number]);
+    // ELK sees every node as a rectangle: end on a diamond's or ellipse's line
+    edge.points = fitRouteToOutlines(
+      edge.points,
+      { box: from as Box, outline: opts.outlines?.get(from.id) ?? "rect" },
+      { box: to as Box, outline: opts.outlines?.get(to.id) ?? "rect" },
+    );
     routed.add(edge.id);
   }
   for (const edge of model.edges.values()) {

@@ -211,6 +211,16 @@ class Bridge {
           await new Promise((r) => requestAnimationFrame(() => r(null)));
           this.save();
           break;
+        case "mermaid":
+          result = await this.engine.mermaid(
+            req.payload.definition ?? "",
+            req.payload,
+          );
+          if (!req.payload.print) {
+            await new Promise((r) => requestAnimationFrame(() => r(null)));
+            this.save();
+          }
+          break;
         case "describe":
           result = this.engine.describe();
           break;

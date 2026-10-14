@@ -119,7 +119,7 @@ const nodeColor = (node: NodeModel) =>
   colorFor(node.kind ? KINDS[node.kind]?.color : undefined) ??
   PALETTE.black;
 
-const nodeShape = (node: NodeModel) =>
+export const nodeShape = (node: NodeModel) =>
   node.shape !== "rect"
     ? node.shape
     : node.kind && KINDS[node.kind]?.shape

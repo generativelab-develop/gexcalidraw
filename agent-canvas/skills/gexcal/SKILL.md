@@ -19,7 +19,7 @@ Run it as `gexcal <command>` if it is on PATH, otherwise `node <gexcalidraw>/age
 
 ## Ids and ops
 
-Ids are yours and stable (`[A-Za-z0-9][A-Za-z0-9_.:-]*`). Re-sending an op with an existing id UPDATES it; nothing is duplicated. One id names one thing (a node and a group cannot share an id).
+Ids are yours and stable (`[A-Za-z0-9][A-Za-z0-9_.:>-]*`; an edge is `from->to` unless you name it). Re-sending an op with an existing id UPDATES it; nothing is duplicated. One id names one thing (a node and a group cannot share an id).
 
 ```json
 {
@@ -63,6 +63,18 @@ Ids are yours and stable (`[A-Za-z0-9][A-Za-z0-9_.:-]*`). Re-sending an op with 
 Pass `null` to clear an optional field (`"group": null` takes a node out of its group). Colours: blue green red yellow orange violet pink teal gray black or `#rrggbb`.
 
 A batch is all-or-nothing: an op that names a missing node/group, reuses an id for another kind of thing, or misses a required field is REFUSED with the op number and the reason, and nothing is drawn. Fix the op and resend.
+
+## From Mermaid
+
+A Mermaid flowchart (`flowchart LR` / `graph TD`) becomes the same agent-owned nodes, edges and groups, with the Mermaid ids:
+
+```
+gexcal mermaid flow.mmd                # draw it
+gexcal mermaid flow.mmd --print        # just print the ops, to edit and `apply`
+gexcal mermaid flow.mmd --prefix auth. # namespace the ids when adding to a drawing
+```
+
+Subgraphs become groups (nested ones too), `{}` nodes diamonds, `(( ))` ellipses, `-.->` dashed edges; styles and classDefs are not carried over. Other Mermaid diagram types are refused.
 
 ## Placement rules (what the canvas does for you)
 

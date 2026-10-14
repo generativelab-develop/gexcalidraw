@@ -84,7 +84,7 @@ const checkId = (index: number, op: unknown, id: unknown, what = "id") => {
     fail(
       index,
       op,
-      `${what} must match ${ID_PATTERN} (letters, digits, _ . : -), got ${JSON.stringify(
+      `${what} must match ${ID_PATTERN} (letters, digits, _ . : - >), got ${JSON.stringify(
         id,
       )}`,
     );

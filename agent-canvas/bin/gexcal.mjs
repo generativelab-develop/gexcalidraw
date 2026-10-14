@@ -22,7 +22,7 @@ server
   gexcal status                 which file is open, which canvases are connected
   gexcal stop                   stop the canvas server
 
-draw (ids are yours: letters, digits, _ . : -)
+draw (ids are yours: letters, digits, _ . : - >; an edge is from->to by default)
   gexcal node <id> <label> [--shape rect|ellipse|diamond] [--kind K] [--group G]
                            [--color C] [--source PATH] [--at X,Y]
   gexcal edge <from> <to> [label] [--id ID] [--line solid|dashed|dotted] [--color C]
@@ -32,6 +32,9 @@ draw (ids are yours: letters, digits, _ . : -)
   gexcal layout [--direction RIGHT|DOWN|LEFT|UP] [--keep-pinned]
   gexcal theme clean|sketch
   gexcal apply [ops.json | -]   several ops at once: {"ops":[...]} or [...]
+  gexcal mermaid [file.mmd | -] [--prefix P] [--print]
+                                draw a Mermaid flowchart as nodes/edges/groups
+                                (--print shows the ops instead of drawing them)
   gexcal clear                  remove everything the agent drew
   gexcal undo                   undo the last change on the canvas
 
@@ -432,6 +435,30 @@ const commands = {
       die('expected {"ops": [...]} or a JSON array of ops', 2);
     }
     await apply(ops);
+  },
+
+  async mermaid(argv) {
+    const { values, positionals } = parseArgs({
+      args: argv,
+      allowPositionals: true,
+      options: {
+        prefix: { type: "string" },
+        print: { type: "boolean", default: false },
+      },
+    });
+    const source = positionals[0] ?? "-";
+    const definition =
+      source === "-" ? await readStdin() : fs.readFileSync(source, "utf8");
+    const result = await request("mermaid", {
+      definition,
+      prefix: values.prefix,
+      print: values.print,
+    });
+    if (values.print) {
+      console.log(JSON.stringify({ ops: result.ops }, null, 2));
+      return;
+    }
+    printApply(result.applied);
   },
 
   async undo() {

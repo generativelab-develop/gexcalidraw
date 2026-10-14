@@ -136,7 +136,8 @@ export type GxData =
     }
   | { role: "note-link"; id: string };
 
-export const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/;
+// `>` admits the default edge id `from->to`
+export const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:>-]{0,79}$/;
 
 export const elementId = {
   node: (id: string) => `gx-n-${id}`,

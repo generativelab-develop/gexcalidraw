@@ -105,3 +105,61 @@ export const labelBoxOnRoute = (
   const [x, y] = route[route.length - 1];
   return { x, y, width: size.width, height: size.height };
 };
+
+export type Outline = "rect" | "ellipse" | "diamond";
+
+/** How far a shape reaches from its centre at relative offset t (0..1) across. */
+const reach = (outline: Outline, t: number) =>
+  outline === "diamond"
+    ? Math.max(0, 1 - t)
+    : outline === "ellipse"
+    ? Math.sqrt(Math.max(0, 1 - t * t))
+    : 1;
+
+/**
+ * Moves the ends of an orthogonal route from a box's bounding rectangle onto
+ * its real outline (a diamond's or an ellipse's), sliding the first and last
+ * segment toward the centre first when they would only graze the outline.
+ */
+export const fitRouteToOutlines = (
+  route: Point[],
+  from: { box: Box; outline: Outline },
+  to: { box: Box; outline: Outline },
+): Point[] => {
+  const points = route.map((p) => [p[0], p[1]] as Point);
+  if (points.length < 2) {
+    return points;
+  }
+  const fit = (end: number, next: number, { box, outline }: typeof from) => {
+    if (outline === "rect") {
+      return;
+    }
+    const [cx, cy] = centerOf(box);
+    const p = points[end];
+    const q = points[next];
+    const horizontal = Math.abs(p[1] - q[1]) < 0.01;
+    const axis = horizontal ? 1 : 0; // the coordinate the segment runs at
+    const half = horizontal ? box.height / 2 : box.width / 2;
+    const centre = horizontal ? cy : cx;
+    let t = Math.abs(p[axis] - centre) / half;
+    // keep both ends of a two-point route where they are: moving one moves both
+    if (t > 0.5 && points.length > 2) {
+      const at = centre + Math.sign(p[axis] - centre) * half * 0.5;
+      p[axis] = at;
+      q[axis] = at;
+      t = 0.5;
+    }
+    if (t >= 1) {
+      return;
+    }
+    const other = 1 - axis;
+    const [ocentre, ohalf] = horizontal
+      ? [cx, box.width / 2]
+      : [cy, box.height / 2];
+    p[other] =
+      ocentre + Math.sign(p[other] - ocentre || 1) * ohalf * reach(outline, t);
+  };
+  fit(0, 1, from);
+  fit(points.length - 1, points.length - 2, to);
+  return points;
+};

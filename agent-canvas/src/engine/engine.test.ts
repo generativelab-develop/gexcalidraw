@@ -1,4 +1,4 @@
-import { overlaps, routeHitsBox } from "./geometry";
+import { fitRouteToOutlines, overlaps, routeHitsBox } from "./geometry";
 import { fullLayout, incrementalLayout, placeNotes } from "./layout";
 import { emptyModel, followMovedGroups } from "./model";
 import { applyOps } from "./ops";
@@ -97,6 +97,17 @@ describe("applyOps", () => {
     expect(model.notes.get("note-1")!.on).toBeUndefined();
     expect(outcome.removed).toEqual(new Set(["a->b", "b"]));
     expect(outcome.warnings[0]).toMatch(/free-standing/);
+  });
+
+  it("accepts the default edge id when it is named back", () => {
+    const model = build([
+      { op: "node", id: "a", label: "A" },
+      { op: "node", id: "b", label: "B" },
+      { op: "edge", from: "a", to: "b" },
+      { op: "edge", id: "a->b", from: "a", to: "b", label: "calls" },
+    ]);
+    expect(model.edges.size).toBe(1);
+    expect(model.edges.get("a->b")!.label).toBe("calls");
   });
 
   it("rejects ids outside the id grammar", () => {
@@ -199,5 +210,32 @@ describe("hand placement", () => {
     expect([a.x, a.y]).toEqual([140, 130]);
     expect(a.pinned).toBe(true);
     expect(g.pinned).toBe(true);
+  });
+});
+
+describe("fitRouteToOutlines", () => {
+  it("ends a route on a diamond's outline, not its bounding box", () => {
+    const diamond = { x: 0, y: 0, width: 200, height: 100 };
+    const target = { x: 400, y: 80, width: 100, height: 40 };
+    // leaves the diamond's box near its bottom corner
+    const route = fitRouteToOutlines(
+      [
+        [200, 90],
+        [300, 90],
+        [300, 100],
+        [400, 100],
+      ],
+      { box: diamond, outline: "diamond" },
+      { box: target, outline: "rect" },
+    );
+    const [x, y] = route[0];
+    // on the outline: |dx|/100 + |dy|/50 = 1
+    expect(Math.abs(x - 100) / 100 + Math.abs(y - 50) / 50).toBeCloseTo(1);
+    // still orthogonal
+    for (let k = 1; k < route.length; k++) {
+      const [a, b] = [route[k - 1], route[k]];
+      expect(a[0] === b[0] || a[1] === b[1]).toBe(true);
+    }
+    expect(route[route.length - 1]).toEqual([400, 100]);
   });
 });
