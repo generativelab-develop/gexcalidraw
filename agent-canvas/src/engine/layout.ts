@@ -31,6 +31,9 @@ export const GROUP_PAD = { top: 52, side: 28, bottom: 28 };
 const GAP = 60;
 const LAYER_GAP = 110;
 const NOTE_GAP = 36;
+// how far around its target a note looks for a free place, and in what steps
+const NEAR_REACH = 520;
+const NEAR_STEP = 20;
 
 const elk = new ELK();
 
@@ -446,12 +449,33 @@ export const placeNotes = (
         { x: t.x, y: below, ...size },
         { x: left, y: t.y, ...size },
       );
-      for (let r = 1; r < 8; r++) {
-        candidates.push(
-          { x: right + r * 60, y: above - r * 40, ...size },
-          { x: t.x + r * 60, y: below + r * 40, ...size },
-        );
+      // in a dense drawing the spots above may all be taken: try every free
+      // place near the target, nearest first, before giving up on nearness
+      const near: { box: Box; distance: number }[] = [];
+      for (let dx = -NEAR_REACH; dx <= NEAR_REACH; dx += NEAR_STEP) {
+        for (let dy = -NEAR_REACH; dy <= NEAR_REACH; dy += NEAR_STEP) {
+          const box = {
+            x: t.x + t.width / 2 + dx - size.width / 2,
+            y: t.y + t.height / 2 + dy - size.height / 2,
+            ...size,
+          };
+          const gapX = Math.max(
+            0,
+            box.x - (t.x + t.width),
+            t.x - (box.x + box.width),
+          );
+          const gapY = Math.max(
+            0,
+            box.y - (t.y + t.height),
+            t.y - (box.y + box.height),
+          );
+          if (gapX + gapY >= NOTE_GAP) {
+            near.push({ box, distance: Math.hypot(gapX, gapY) });
+          }
+        }
       }
+      near.sort((a, b) => a.distance - b.distance);
+      candidates.push(...near.map((n) => n.box));
     }
     // free notes (and the fallback for attached ones) go in a column on the right
     const column = all ? all.x + all.width + NOTE_GAP * 2 : 0;

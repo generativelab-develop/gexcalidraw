@@ -169,6 +169,38 @@ describe("placeNotes", () => {
       expect(routeHitsBox(edge.points!, note)).toBe(false);
     }
   });
+
+  it("stays near its target when the spots right beside it are taken", () => {
+    // every spot right beside the target is taken, but there is room
+    // up and to the left; the drawing itself reaches far to the right
+    const ring: [string, number, number, number, number][] = [
+      ["t", 0, 0, 140, 64],
+      ["ne", 150, -500, 650, 460],
+      ["se", -20, 100, 720, 400],
+      ["e", 190, 0, 140, 64],
+      ["w", -190, 0, 140, 64],
+      ["far", 3000, 0, 140, 64],
+    ];
+    const model = build([
+      ...ring.map(([id]): Op => ({ op: "node", id, label: id })),
+      { op: "note", id: "m", on: "t", text: "memo" },
+    ]);
+    for (const [id, x, y, width, height] of ring) {
+      Object.assign(model.nodes.get(id)!, {
+        x,
+        y,
+        width,
+        height,
+        pinned: true,
+      });
+    }
+    placeNotes(model, new Map([["m", { width: 200, height: 80 }]]), new Map());
+    const note = model.notes.get("m")! as Box;
+    for (const node of model.nodes.values()) {
+      expect(overlaps(note, node as Box)).toBe(false);
+    }
+    expect(Math.hypot(note.x, note.y)).toBeLessThan(500);
+  });
 });
 
 describe("hand placement", () => {
