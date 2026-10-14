@@ -40,3 +40,15 @@ GEXCAL_DEV=1 node agent-canvas/server/serve.mjs --file /tmp/x.excalidraw
 ```
 
 Without `GEXCAL_DEV=1` the server does not watch sources, so an open canvas is never reloaded under an agent's feet.
+
+## Embedding the canvas
+
+`yarn --cwd agent-canvas build:embed` builds `src/embed.tsx` into `agent-canvas/dist-embed/`: `plan-canvas.js` (one ES module, React and the fonts included, no dynamic import, no network reference) and `plan-canvas.css`. A host page serves both from its own origin and calls
+
+```js
+const canvas = await mountPlanCanvas(element, { theme, langCode: "ko-KR", onSave });
+canvas.load(sceneText, { fresh: true });     // a file just opened
+await canvas.request("apply", { ops });      // { ok, result } or { ok: false, error }
+```
+
+The host owns the file: it loads scenes in, writes what `onSave` hands it, and relays agent requests (`apply`, `mermaid`, `describe`, `export`, `fit`, `undo`) to `request`. The same `CanvasSession` (`src/session.ts`) runs behind the dev server's page, so both behave alike. The build leaves out the hand-drawn CJK font (Xiaolai, ~13 MB); CJK text falls back to the system font. `node agent-canvas/test/embed.e2e.mjs` checks the build under a strict same-origin Content-Security-Policy.

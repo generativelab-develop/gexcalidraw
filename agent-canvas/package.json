@@ -19,6 +19,7 @@
   },
   "scripts": {
     "gexcal": "node ./bin/gexcal.mjs",
-    "test": "node ./test/live.e2e.mjs"
+    "test": "node ./test/live.e2e.mjs",
+    "build:embed": "vite build --config vite.embed.config.mts"
   }
 }
