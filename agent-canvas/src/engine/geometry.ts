@@ -163,3 +163,36 @@ export const fitRouteToOutlines = (
   fit(points.length - 1, points.length - 2, to);
   return points;
 };
+
+/** Where the line from `box`'s centre towards `towards` leaves its outline. */
+export const outlinePoint = (
+  box: Box,
+  outline: Outline,
+  towards: Point,
+): Point => {
+  if (outline === "rect") {
+    return closestEdgePoint(box, towards);
+  }
+  const [cx, cy] = centerOf(box);
+  const dx = towards[0] - cx;
+  const dy = towards[1] - cy;
+  if (dx === 0 && dy === 0) {
+    return [cx, cy];
+  }
+  const a = box.width / 2;
+  const b = box.height / 2;
+  const t =
+    outline === "ellipse"
+      ? 1 / Math.sqrt((dx / a) ** 2 + (dy / b) ** 2)
+      : 1 / (Math.abs(dx) / a + Math.abs(dy) / b);
+  return [cx + dx * t, cy + dy * t];
+};
+
+/** A straight line between two shapes, ending on their real outlines. */
+export const straightBetween = (
+  from: { box: Box; outline: Outline },
+  to: { box: Box; outline: Outline },
+): Point[] => [
+  outlinePoint(from.box, from.outline, centerOf(to.box)),
+  outlinePoint(to.box, to.outline, centerOf(from.box)),
+];

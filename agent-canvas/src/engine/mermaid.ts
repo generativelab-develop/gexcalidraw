@@ -1,10 +1,11 @@
-// Mermaid flowchart -> gexcal ops. The diagram becomes agent-owned nodes,
-// edges and groups with the Mermaid ids, laid out by ELK like anything else,
-// so it can be edited op by op afterwards.
+// Mermaid -> gexcal ops. A flowchart becomes agent-owned nodes, edges and
+// groups with the Mermaid ids, laid out by ELK like anything else, so it can
+// be edited op by op afterwards; the other diagram kinds are read from their
+// text (mermaid-text.ts).
 
 import { parseMermaid } from "@excalidraw/mermaid-to-excalidraw/dist/parseMermaid.js";
 
-import { ID_PATTERN } from "./model";
+import { mermaidLines, safeId, SUPPORTED, textReader } from "./mermaid-text";
 
 import type { Direction, Shape } from "./model";
 import type { Op } from "./ops";
@@ -50,12 +51,20 @@ export const mermaidToOps = async (
   definition: string,
   prefix = "",
 ): Promise<Op[]> => {
+  const lines = mermaidLines(definition);
+  if (!lines.length) {
+    throw new Error("the Mermaid definition is empty");
+  }
+  const reader = textReader(lines[0]);
+  if (reader) {
+    return reader(lines, prefix);
+  }
   const header = definition.match(
     /^\s*(?:flowchart|graph)\s+(LR|RL|TD|TB|BT)\b/m,
   );
   if (!/^\s*(?:flowchart|graph)\b/m.test(definition)) {
     throw new Error(
-      "only Mermaid flowcharts (`flowchart` / `graph`) become editable diagrams",
+      `this Mermaid diagram kind is not drawn as an editable diagram; supported: ${SUPPORTED}`,
     );
   }
   const parsed = (await parseMermaid(definition)) as unknown as Flowchart;
@@ -67,10 +76,7 @@ export const mermaidToOps = async (
   const idFor = (raw: string) => {
     let id = ids.get(raw);
     if (!id) {
-      id = `${prefix}${raw}`.replace(/[^A-Za-z0-9_.:>-]/g, "_");
-      if (!ID_PATTERN.test(id)) {
-        id = `m_${id}`.slice(0, 80);
-      }
+      id = safeId(prefix, raw);
       ids.set(raw, id);
     }
     return id;

@@ -19,12 +19,14 @@ import { applyOps } from "./ops";
 import {
   buildElements,
   loadFonts,
+  measureBlock,
   measureEdgeLabel,
   measureNode,
   measureNote,
-  nodeShape,
+  nodeOutline,
 } from "./render";
 
+import type { Drawing } from "./blocks";
 import type { Size } from "./layout";
 import type { Model } from "./model";
 import type { Op } from "./ops";
@@ -35,6 +37,7 @@ const cloneModel = (model: Model): Model => ({
   edges: new Map([...model.edges].map(([k, v]) => [k, { ...v }])),
   groups: new Map([...model.groups].map(([k, v]) => [k, { ...v }])),
   notes: new Map([...model.notes].map(([k, v]) => [k, { ...v }])),
+  blocks: new Map([...model.blocks].map(([k, v]) => [k, { ...v }])),
 });
 
 const blobToBase64 = (blob: Blob) =>
@@ -93,6 +96,15 @@ export class Engine {
     for (const node of model.nodes.values()) {
       sizes.set(node.id, measureNode(node, theme));
     }
+    const drawings = new Map<string, Drawing>();
+    for (const block of model.blocks.values()) {
+      const drawing = measureBlock(block, theme);
+      drawings.set(block.id, drawing);
+      sizes.set(block.id, { width: drawing.width, height: drawing.height });
+      // a block drawn at a new size keeps its corner, not its old size
+      block.width = drawing.width;
+      block.height = drawing.height;
+    }
     const edgeLabels = new Map<string, Size>();
     for (const edge of model.edges.values()) {
       if (edge.label) {
@@ -110,10 +122,11 @@ export class Engine {
     }
 
     const outlines = new Map(
-      [...model.nodes.values()].map((n) => [n.id, nodeShape(n)] as const),
+      [...model.nodes.values()].map((n) => [n.id, nodeOutline(n)] as const),
     );
     const handPlaced =
       [...model.nodes.values()].some((n) => n.pinned) ||
+      [...model.blocks.values()].some((b) => b.pinned) ||
       [...model.groups.values()].some((g) => g.pinned);
     let layout: ApplyResult["layout"];
     if (outcome.layout) {
@@ -138,7 +151,11 @@ export class Engine {
     const previous = new Map(
       all.filter((e) => isAgentOwned(e)).map((e) => [e.id, e]),
     );
-    const { elements: agent, warnings } = buildElements(model, previous);
+    const { elements: agent, warnings } = buildElements(
+      model,
+      previous,
+      drawings,
+    );
     const next = new Set(agent.map((e) => e.id));
     const tombstones = [...previous.values()]
       .filter((e) => !next.has(e.id) && !e.isDeleted)
@@ -168,7 +185,7 @@ export class Engine {
     };
   }
 
-  /** A Mermaid flowchart, as ops; applied unless only the ops are wanted. */
+  /** A Mermaid diagram, as ops; applied unless only the ops are wanted. */
   async mermaid(
     definition: string,
     opts: { prefix?: string; print?: boolean },
@@ -216,7 +233,13 @@ export class Engine {
         e.id === elementId.groupLabel(id) ||
         e.id === elementId.note(id) ||
         e.id === elementId.noteLabel(id) ||
-        e.id === elementId.noteLink(id),
+        e.id === elementId.noteLink(id) ||
+        e.id.startsWith(`gx-n-${id}-`) ||
+        e.id === elementId.block(id) ||
+        e.id.startsWith(`gx-b-${id}-`) ||
+        // what a frame holds comes with it
+        e.frameId === elementId.group(id) ||
+        e.frameId === elementId.block(id),
     );
   }
 
@@ -236,9 +259,19 @@ export class Engine {
       const model = readModel(live);
       const inGroup = (g?: string): boolean =>
         !!g && (groups.has(g) || inGroup(model.groups.get(g)?.parent));
-      const members = [...model.nodes.values()]
+      const leaves = [...model.nodes.values(), ...model.blocks.values()]
         .filter((n) => inGroup(n.group))
         .map((n) => n.id);
+      const inside = new Set([...opts.ids, ...leaves]);
+      const members = [
+        ...leaves,
+        ...[...model.groups.values()]
+          .filter((g) => inGroup(g.parent))
+          .map((g) => g.id),
+        ...[...model.edges.values()]
+          .filter((e) => inside.has(e.from) && inside.has(e.to))
+          .map((e) => e.id),
+      ];
       if (members.length) {
         elements = live.filter((e) =>
           this.matches(e, [...opts.ids!, ...members]),

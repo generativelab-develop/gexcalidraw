@@ -33,7 +33,8 @@ draw (ids are yours: letters, digits, _ . : - >; an edge is from->to by default)
   gexcal theme clean|sketch
   gexcal apply [ops.json | -]   several ops at once: {"ops":[...]} or [...]
   gexcal mermaid [file.mmd | -] [--prefix P] [--print]
-                                draw a Mermaid flowchart as nodes/edges/groups
+                                draw a Mermaid diagram (flowchart, sequence, class, ER,
+                                state, mindmap, gantt, quadrant) as editable ops
                                 (--print shows the ops instead of drawing them)
   gexcal clear                  remove everything the agent drew
   gexcal undo                   undo the last change on the canvas

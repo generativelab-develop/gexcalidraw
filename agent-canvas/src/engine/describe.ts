@@ -8,6 +8,7 @@ import type {
   ExcalidrawTextElement,
 } from "@excalidraw/element/types";
 
+import { summarizeBlock } from "./blocks";
 import { segmentHitsBox } from "./geometry";
 import { elementId, gxOf, isAgentOwned, readModel } from "./model";
 
@@ -42,11 +43,12 @@ export const findIssues = (
 ): Issue[] => {
   const issues: Issue[] = [];
   const byId = new Map(elements.map((e) => [e.id, e]));
-  const nodes = [...model.nodes.values()].filter(
+  const nodes = [...model.nodes.values(), ...model.blocks.values()].filter(
     (n) => n.x !== undefined,
   ) as (Box & {
     id: string;
     group?: string;
+    type?: string;
   })[];
   const notes = [...model.notes.values()].filter(
     (n) => n.x !== undefined,
@@ -55,7 +57,7 @@ export const findIssues = (
   })[];
 
   const solids = [
-    ...nodes.map((n) => ({ ...n, what: "node" })),
+    ...nodes.map((n) => ({ ...n, what: n.type ? "block" : "node" })),
     ...notes.map((n) => ({ ...n, what: "note" })),
   ];
   for (let i = 0; i < solids.length; i++) {
@@ -102,7 +104,9 @@ export const findIssues = (
         issues.push({
           kind: "foreign-group",
           ids: [node.id, group.id],
-          detail: `node "${node.id}" lies inside group "${group.id}" but does not belong to it`,
+          detail: `${node.type ? "block" : "node"} "${
+            node.id
+          }" lies inside group "${group.id}" but does not belong to it`,
         });
       }
     }
@@ -129,7 +133,9 @@ export const findIssues = (
         issues.push({
           kind: "edge-through-node",
           ids: [edge.id, node.id],
-          detail: `edge "${edge.id}" runs through node "${node.id}"`,
+          detail: `edge "${edge.id}" runs through ${
+            node.type ? "block" : "node"
+          } "${node.id}"`,
         });
       }
     }
@@ -215,21 +221,31 @@ export const describeScene = (
   });
 
   const lines: string[] = [];
-  const counts = `${model.nodes.size} nodes, ${model.edges.size} edges, ${model.groups.size} groups, ${model.notes.size} notes, ${human.length} elements drawn by hand`;
+  const counts = `${model.nodes.size} nodes, ${model.edges.size} edges, ${model.groups.size} groups, ${model.blocks.size} blocks, ${model.notes.size} notes, ${human.length} elements drawn by hand`;
   lines.push(
-    `diagram: direction ${model.meta.direction}, theme ${model.meta.theme}; ${counts}`,
+    `diagram: layout ${model.meta.layout ?? "layered"}${
+      model.meta.columns ? ` (${model.meta.columns} columns)` : ""
+    }, direction ${model.meta.direction}, theme ${model.meta.theme}; ${counts}`,
   );
 
   if (model.groups.size) {
     lines.push("", "groups:");
     for (const g of model.groups.values()) {
-      const members = [...model.nodes.values()]
+      const members = [...model.nodes.values(), ...model.blocks.values()]
         .filter((n) => n.group === g.id)
         .map((n) => n.id);
+      const attrs = [
+        g.slide ? "slide" : g.frame ? "frame" : null,
+        g.layout ? `layout=${g.layout}` : null,
+        g.columns ? `columns=${g.columns}` : null,
+        g.pinned ? "[hand-placed]" : null,
+      ].filter(Boolean);
       lines.push(
         `  ${g.id} ${quote(g.label)}${g.parent ? ` in ${g.parent}` : ""} ${box(
           g as Box,
-        )}${g.pinned ? " [hand-placed]" : ""} members=[${members.join(", ")}]`,
+        )}${attrs.length ? ` ${attrs.join(" ")}` : ""} members=[${members.join(
+          ", ",
+        )}]`,
       );
     }
   }
@@ -238,6 +254,8 @@ export const describeScene = (
     for (const n of model.nodes.values()) {
       const attrs = [
         n.shape !== "rect" ? n.shape : null,
+        n.size && n.size !== "m" ? `size=${n.size}` : null,
+        n.fields ? `fields=${JSON.stringify(n.fields).slice(0, 160)}` : null,
         n.kind ? `kind=${n.kind}` : null,
         n.group ? `group=${n.group}` : null,
         n.color ? `color=${n.color}` : null,
@@ -257,7 +275,28 @@ export const describeScene = (
       lines.push(
         `  ${e.id}: ${e.from} -> ${e.to}${e.label ? ` ${quote(e.label)}` : ""}${
           e.line && e.line !== "solid" ? ` (${e.line})` : ""
+        }${e.head && e.head !== "arrow" ? ` head=${e.head}` : ""}${
+          e.tail && e.tail !== "none" ? ` tail=${e.tail}` : ""
         }`,
+      );
+    }
+  }
+  if (model.blocks.size) {
+    lines.push(
+      "",
+      "blocks (drawn from their description; resend the op to change one):",
+    );
+    for (const b of model.blocks.values()) {
+      lines.push(
+        `  ${b.id} ${summarizeBlock(b.type, b.spec)} ${box(b as Box)}${
+          b.group ? ` group=${b.group}` : ""
+        }${b.pinned ? " [hand-placed]" : ""}`,
+      );
+      const spec = JSON.stringify({ op: b.type, id: b.id, ...b.spec });
+      lines.push(
+        spec.length <= 1500
+          ? `    ${spec}`
+          : `    (${spec.length} characters; describe --json shows the whole op)`,
       );
     }
   }
@@ -300,6 +339,7 @@ export const describeScene = (
       nodes: [...model.nodes.values()].map(({ style, ...n }) => n),
       edges: [...model.edges.values()].map(({ style, ...e }) => e),
       notes: [...model.notes.values()],
+      blocks: [...model.blocks.values()],
       human: humanItems,
       issues,
     },

@@ -30,13 +30,24 @@ import type {
 } from "@excalidraw/element/types";
 import type { LocalPoint } from "@excalidraw/math";
 
+import { blockTexts, drawBlock } from "./blocks";
+
 import { closestEdgePoint, centerOf, straightRoute } from "./geometry";
 import { GROUP_PAD } from "./layout";
-import { elementId } from "./model";
+import { elementId, endElementId, endOf } from "./model";
 
+import type { DrawContext, Drawing, Item } from "./blocks";
 import type { Box } from "./geometry";
 import type { Size } from "./layout";
-import type { GxData, Model, NodeModel, Style, Theme } from "./model";
+import type {
+  BlockModel,
+  GxData,
+  Model,
+  NodeModel,
+  Style,
+  TextSize,
+  Theme,
+} from "./model";
 
 export const PALETTE: Record<string, { stroke: string; fill: string }> = {
   blue: { stroke: "#1971c2", fill: "#d0ebff" },
@@ -86,7 +97,9 @@ export const NOTE_COLORS: Record<string, string> = {
   gray: "#f1f3f5",
 };
 
-const NODE_FONT_SIZE = 20;
+const FONT_SIZES: Record<TextSize, number> = { s: 16, m: 20, l: 28, xl: 40 };
+const FIELD_FONT_SIZE = 16;
+const CARD_PAD = { x: 18, y: 12 };
 const GROUP_LABEL_INSET = { x: 18, y: 14 };
 const EDGE_FONT_SIZE = 16;
 const GROUP_FONT_SIZE = 18;
@@ -114,20 +127,40 @@ const colorFor = (name: string | undefined) => {
   return null;
 };
 
+export const paint = (
+  name: string | undefined,
+  fallback: string,
+): { stroke: string; fill: string } =>
+  colorFor(name) ?? PALETTE[fallback] ?? PALETTE.black;
+
+const fontSizeOf = (node: NodeModel) => FONT_SIZES[node.size ?? "m"];
+
 const nodeColor = (node: NodeModel) =>
   colorFor(node.color) ??
   colorFor(node.kind ? KINDS[node.kind]?.color : undefined) ??
   PALETTE.black;
 
 export const nodeShape = (node: NodeModel) =>
-  node.shape !== "rect"
+  node.fields
+    ? "rect"
+    : node.shape !== "rect"
     ? node.shape
     : node.kind && KINDS[node.kind]?.shape
     ? KINDS[node.kind]!.shape!
     : "rect";
 
+/** The outline the router ends arrows on. */
+export const nodeOutline = (node: NodeModel) => {
+  const shape = nodeShape(node);
+  return shape === "ellipse" || shape === "diamond" ? shape : "rect";
+};
+
 const excalidrawType = (shape: NodeModel["shape"]) =>
-  shape === "rect" ? "rectangle" : shape;
+  shape === "rect" || shape === "text"
+    ? "rectangle"
+    : shape === "sticky"
+    ? "stickynote"
+    : shape;
 
 /** Loads every font face the labels will need, so measuring is exact. */
 export const loadFonts = async (model: Model) => {
@@ -137,6 +170,8 @@ export const loadFonts = async (model: Model) => {
     ...[...model.edges.values()].map((e) => e.label ?? ""),
     ...[...model.groups.values()].map((g) => g.label),
     ...[...model.notes.values()].map((n) => n.text),
+    ...[...model.nodes.values()].flatMap((n) => n.fields?.flat() ?? []),
+    ...[...model.blocks.values()].flatMap((b) => blockTexts(b.spec)),
   ].join("\n");
   if (!texts.trim()) {
     return;
@@ -154,13 +189,26 @@ export const measureNode = (node: NodeModel, theme: Theme): Size => {
   }
   const fontFamily = fontFor(theme);
   const shape = nodeShape(node);
+  const fontSize = fontSizeOf(node);
+  if (node.fields) {
+    const card = cardGeometry(node, theme);
+    return { width: card.width, height: card.height };
+  }
+  if (shape === "sticky") {
+    const size = measureNote(node.label, theme);
+    return { width: size.width, height: Math.max(size.height, 120) };
+  }
+  if (shape === "text") {
+    const m = measureText_(node.label, theme, fontSize);
+    return { width: m.width + 16, height: m.height + 12 };
+  }
   const [box] = convertToExcalidrawElements(
     [
       {
         type: excalidrawType(shape),
         x: 0,
         y: 0,
-        label: { text: node.label, fontSize: NODE_FONT_SIZE, fontFamily },
+        label: { text: node.label, fontSize, fontFamily },
       } as ExcalidrawElementSkeleton,
     ],
     { regenerateIds: true },
@@ -191,6 +239,38 @@ export const measureText_ = (
   );
   return { width: Math.ceil(metrics.width), height: Math.ceil(metrics.height) };
 };
+
+/** A card: the title across the top, then each section under a rule. */
+const cardGeometry = (node: NodeModel, theme: Theme) => {
+  const titleSize = fontSizeOf(node);
+  const title = measureText_(node.label, theme, titleSize);
+  const sections = (node.fields ?? []).map((lines) =>
+    measureText_(lines.join("\n") || " ", theme, FIELD_FONT_SIZE),
+  );
+  const width = Math.max(
+    160,
+    Math.ceil(
+      Math.max(title.width, ...sections.map((m) => m.width)) + CARD_PAD.x * 2,
+    ),
+  );
+  const titleH = title.height + CARD_PAD.y * 2;
+  const offsets: number[] = [];
+  let y = titleH;
+  for (const m of sections) {
+    offsets.push(y);
+    y += m.height + CARD_PAD.y * 2;
+  }
+  return { width, height: Math.ceil(y), titleSize, title, offsets };
+};
+
+/** What a block needs to draw itself: the editor's text measure, the palette. */
+export const blockContext = (theme: Theme): DrawContext => ({
+  measure: (text, fontSize) => measureText_(text || " ", theme, fontSize),
+  paint,
+});
+
+export const measureBlock = (block: BlockModel, theme: Theme): Drawing =>
+  drawBlock(block.type, block.spec, blockContext(theme));
 
 export const measureEdgeLabel = (label: string, theme: Theme) =>
   measureText_(label, theme, EDGE_FONT_SIZE);
@@ -231,6 +311,7 @@ const styleProps = (style: Style | undefined) =>
 export const buildElements = (
   model: Model,
   previous: Map<string, ExcalidrawElement>,
+  drawings: Map<string, Drawing> = new Map(),
 ): { elements: ExcalidrawElement[]; warnings: string[] } => {
   const theme = model.meta.theme;
   const fontFamily = fontFor(theme);
@@ -249,6 +330,154 @@ export const buildElements = (
     }
   };
 
+  const addBlock = (block: BlockModel, drawing: Drawing) => {
+    const ox = block.x!;
+    const oy = block.y!;
+    const frame = drawing.items.find((item) => item.kind === "frame");
+    // what a frame holds moves with it; anything else is one Excalidraw group
+    const together = frame ? [] : [`gx-bg-${block.id}`];
+    const ids: string[] = [];
+    const blockGx: GxData = {
+      role: "block",
+      id: block.id,
+      type: block.type,
+      spec: block.spec,
+      group: block.group,
+      pinned: block.pinned || undefined,
+      laid: [ox, oy],
+      meta,
+    };
+    for (const item of drawing.items) {
+      const own = item.key === "box";
+      const id = own
+        ? elementId.block(block.id)
+        : elementId.blockPart(block.id, item.key);
+      const gx: GxData = own ? blockGx : { role: "block-part", id: block.id };
+      const skeleton = itemSkeleton(item, id, ox, oy, together);
+      if (!skeleton) {
+        continue;
+      }
+      if (item !== frame) {
+        ids.push(id, `${id}-t`);
+      }
+      add(skeleton, gx);
+    }
+    if (frame) {
+      frames.set(elementId.blockPart(block.id, frame.key), new Set(ids));
+    } else {
+      inFrame(block.group, ...ids);
+    }
+  };
+
+  const itemSkeleton = (
+    item: Item,
+    id: string,
+    ox: number,
+    oy: number,
+    groupIds: string[],
+  ): ExcalidrawElementSkeleton | null => {
+    switch (item.kind) {
+      case "frame":
+        return {
+          type: "frame",
+          id,
+          x: ox + item.x,
+          y: oy + item.y,
+          width: item.w,
+          height: item.h,
+          name: item.name,
+          children: [],
+        } as unknown as ExcalidrawElementSkeleton;
+      case "text": {
+        if (!item.text.trim()) {
+          return null;
+        }
+        // the editor reads a centred or right-aligned text's x as that line's
+        // anchor, not its left edge
+        const width =
+          item.align === "center" || item.align === "right"
+            ? measureText_(item.text, theme, item.size).width
+            : 0;
+        return {
+          type: "text",
+          id,
+          x: ox + item.x + (item.align === "center" ? width / 2 : width),
+          y: oy + item.y,
+          text: item.text,
+          fontSize: item.size,
+          fontFamily,
+          textAlign: item.align ?? "left",
+          strokeColor: item.color,
+          opacity: item.opacity ?? 100,
+          groupIds,
+        } as ExcalidrawElementSkeleton;
+      }
+      case "line":
+      case "arrow": {
+        const [x0, y0] = item.points[0];
+        const rel = item.points.map(([px, py]) => [px - x0, py - y0]);
+        const xs = rel.map((p) => p[0]);
+        const ys = rel.map((p) => p[1]);
+        return {
+          type: item.kind,
+          id,
+          x: ox + x0,
+          y: oy + y0,
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+          points: rel,
+          strokeColor: item.stroke,
+          strokeStyle: item.line ?? "solid",
+          strokeWidth: item.strokeWidth ?? 2,
+          roughness,
+          roundness: null,
+          ...(item.kind === "arrow"
+            ? {
+                elbowed: false,
+                startArrowhead:
+                  !item.tail || item.tail === "none" ? null : item.tail,
+                endArrowhead:
+                  item.head === "none" ? null : item.head ?? "arrow",
+              }
+            : null),
+          groupIds,
+        } as unknown as ExcalidrawElementSkeleton;
+      }
+      default:
+        return {
+          type: item.kind === "rect" ? "rectangle" : item.kind,
+          id,
+          x: ox + item.x,
+          y: oy + item.y,
+          width: item.w,
+          height: item.h,
+          strokeColor: item.stroke,
+          backgroundColor: item.fill,
+          fillStyle: item.fillStyle ?? "solid",
+          strokeStyle: item.line ?? "solid",
+          strokeWidth: item.strokeWidth ?? 2,
+          roughness,
+          opacity: item.opacity ?? 100,
+          roundness: item.rounded && item.kind === "rect" ? { type: 3 } : null,
+          groupIds,
+          ...(item.label
+            ? {
+                label: {
+                  text: item.label.text,
+                  id: `${id}-t`,
+                  fontSize: item.label.size,
+                  fontFamily,
+                  textAlign: item.label.align ?? "center",
+                  ...(item.label.color
+                    ? { strokeColor: item.label.color }
+                    : null),
+                },
+              }
+            : null),
+        } as ExcalidrawElementSkeleton;
+    }
+  };
+
   // groups first, outermost first, so they sit underneath their members
   const depth = (id: string) => {
     let d = 0;
@@ -262,9 +491,63 @@ export const buildElements = (
   const groups = [...model.groups.values()].sort(
     (a, b) => depth(a.id) - depth(b.id),
   );
+  // frame id -> the element ids drawn inside it (set after conversion)
+  const frames = new Map<string, Set<string>>();
+  const frameOf = (container: string | undefined): string | undefined => {
+    for (
+      let cursor = container, n = 0;
+      cursor && n < 50;
+      cursor = model.groups.get(cursor)?.parent, n++
+    ) {
+      if (model.groups.get(cursor)?.frame) {
+        return cursor;
+      }
+    }
+    return undefined;
+  };
+  const inFrame = (container: string | undefined, ...ids: string[]) => {
+    const frame = frameOf(container);
+    if (frame) {
+      const members = frames.get(elementId.group(frame)) ?? new Set();
+      ids.forEach((id) => members.add(id));
+      frames.set(elementId.group(frame), members);
+    }
+  };
+
   for (const group of groups) {
     const color = colorFor(group.color) ?? PALETTE.gray;
     const id = elementId.group(group.id);
+    if (group.frame) {
+      frames.set(id, frames.get(id) ?? new Set());
+      add(
+        {
+          type: "frame",
+          id,
+          x: group.x!,
+          y: group.y!,
+          width: group.width!,
+          height: group.height!,
+          name: group.label,
+          children: [],
+        } as unknown as ExcalidrawElementSkeleton,
+        {
+          role: "group",
+          id: group.id,
+          label: group.label,
+          parent: group.parent,
+          color: group.color,
+          frame: true,
+          slide: group.slide,
+          layout: group.layout,
+          columns: group.columns,
+          pinned: group.pinned || undefined,
+          laid: [group.x!, group.y!],
+          meta,
+        },
+      );
+      continue;
+    }
+    inFrame(group.parent, id, elementId.groupLabel(group.id));
     add(
       {
         type: "rectangle",
@@ -290,6 +573,8 @@ export const buildElements = (
         label: group.label,
         parent: group.parent,
         color: group.color,
+        layout: group.layout,
+        columns: group.columns,
         pinned: group.pinned || undefined,
         laid: [group.x!, group.y!],
         meta,
@@ -319,6 +604,110 @@ export const buildElements = (
     const color = nodeColor(node);
     const shape = nodeShape(node);
     const id = elementId.node(node.id);
+    const fontSize = fontSizeOf(node);
+    const gx: GxData = {
+      role: "node",
+      id: node.id,
+      shape: node.shape,
+      kind: node.kind,
+      source: node.source,
+      group: node.group,
+      color: node.color,
+      fields: node.fields,
+      size: node.size,
+      pinned: node.pinned || undefined,
+      laid: [node.x!, node.y!],
+      meta,
+    };
+    if (node.fields) {
+      // a card: its parts are grouped with the box, so they move together
+      const card = cardGeometry(node, theme);
+      const together = [`gx-ng-${node.id}`];
+      const parts: string[] = [id];
+      add(
+        {
+          type: "rectangle",
+          id,
+          x: node.x!,
+          y: node.y!,
+          width: node.width!,
+          height: node.height!,
+          strokeColor: color.stroke,
+          backgroundColor: color.fill,
+          fillStyle: "solid",
+          strokeWidth: 2,
+          roughness,
+          roundness: { type: 3 },
+          groupIds: together,
+          ...styleProps(node.style),
+          link: null,
+        } as ExcalidrawElementSkeleton,
+        gx,
+      );
+      const titleId = elementId.nodePart(node.id, "title");
+      parts.push(titleId);
+      add(
+        {
+          type: "text",
+          id: titleId,
+          // a centred text's x is its middle
+          x: node.x! + node.width! / 2,
+          y: node.y! + CARD_PAD.y,
+          text: node.label,
+          fontSize: card.titleSize,
+          fontFamily,
+          textAlign: "center",
+          strokeColor: color.stroke,
+          groupIds: together,
+        } as ExcalidrawElementSkeleton,
+        { role: "node-part", id: node.id },
+      );
+      node.fields.forEach((lines, k) => {
+        const y = node.y! + card.offsets[k];
+        const ruleId = elementId.nodePart(node.id, `rule${k}`);
+        const fieldId = elementId.nodeField(node.id, k);
+        parts.push(ruleId, fieldId);
+        add(
+          {
+            type: "line",
+            id: ruleId,
+            x: node.x!,
+            y,
+            width: node.width!,
+            height: 0,
+            points: [
+              [0, 0],
+              [node.width!, 0],
+            ],
+            strokeColor: color.stroke,
+            strokeWidth: 1,
+            roughness,
+            groupIds: together,
+          } as unknown as ExcalidrawElementSkeleton,
+          { role: "node-part", id: node.id },
+        );
+        add(
+          {
+            type: "text",
+            id: fieldId,
+            x: node.x! + CARD_PAD.x,
+            y: y + CARD_PAD.y,
+            text: lines.join("\n") || " ",
+            fontSize: FIELD_FONT_SIZE,
+            fontFamily,
+            textAlign: "left",
+            strokeColor: "#1e1e1e",
+            groupIds: together,
+          } as ExcalidrawElementSkeleton,
+          { role: "node-part", id: node.id },
+        );
+      });
+      inFrame(node.group, ...parts);
+      continue;
+    }
+    const sticky = shape === "sticky";
+    const text = shape === "text";
+    inFrame(node.group, id, elementId.nodeLabel(node.id));
     add(
       {
         type: excalidrawType(shape),
@@ -327,39 +716,39 @@ export const buildElements = (
         y: node.y!,
         width: node.width!,
         height: node.height!,
-        strokeColor: color.stroke,
-        backgroundColor: color.fill,
+        strokeColor: text ? "transparent" : color.stroke,
+        backgroundColor: text
+          ? "transparent"
+          : sticky
+          ? NOTE_COLORS[node.color ?? "yellow"] ?? color.fill
+          : color.fill,
         fillStyle: "solid",
         strokeWidth: 2,
         roughness,
         roundness: shape === "rect" ? { type: 3 } : null,
-        ...styleProps(node.style),
+        ...(sticky ? { baseHeight: node.height! } : null),
+        ...(text ? null : styleProps(node.style)),
         link: null,
         label: {
           text: node.label,
           id: elementId.nodeLabel(node.id),
-          fontSize: NODE_FONT_SIZE,
+          fontSize: sticky ? NOTE_FONT_SIZE : fontSize,
           fontFamily,
+          ...(text
+            ? {
+                textAlign: "left",
+                strokeColor: colorFor(node.color)?.stroke ?? "#1e1e1e",
+              }
+            : null),
         },
       } as ExcalidrawElementSkeleton,
-      {
-        role: "node",
-        id: node.id,
-        shape: node.shape,
-        kind: node.kind,
-        source: node.source,
-        group: node.group,
-        color: node.color,
-        pinned: node.pinned || undefined,
-        laid: [node.x!, node.y!],
-        meta,
-      },
+      gx,
     );
   }
 
   for (const edge of model.edges.values()) {
-    const from = model.nodes.get(edge.from);
-    const to = model.nodes.get(edge.to);
+    const from = endOf(model, edge.from);
+    const to = endOf(model, edge.to);
     if (!from || !to) {
       warnings.push(
         `edge "${edge.id}" was dropped: "${
@@ -396,8 +785,10 @@ export const buildElements = (
         elbowed: false,
         roundness: null,
         ...styleProps(edge.style),
-        start: { id: elementId.node(edge.from) },
-        end: { id: elementId.node(edge.to) },
+        startArrowhead: !edge.tail || edge.tail === "none" ? null : edge.tail,
+        endArrowhead: edge.head === "none" ? null : edge.head ?? "arrow",
+        start: { id: endElementId(model, edge.from) },
+        end: { id: endElementId(model, edge.to) },
         ...(edge.label
           ? {
               label: {
@@ -419,6 +810,20 @@ export const buildElements = (
         color: edge.color,
       },
     );
+    if (frameOf(from.group) && frameOf(from.group) === frameOf(to.group)) {
+      inFrame(
+        from.group,
+        elementId.edge(edge.id),
+        elementId.edgeLabel(edge.id),
+      );
+    }
+  }
+
+  for (const block of model.blocks.values()) {
+    const drawing =
+      drawings.get(block.id) ??
+      drawBlock(block.type, block.spec, blockContext(theme));
+    addBlock(block, drawing);
   }
 
   for (const note of model.notes.values()) {
@@ -467,6 +872,8 @@ export const buildElements = (
     const noteEl = byId.get(elementId.note(note.id));
     const targetId = model.nodes.has(note.on)
       ? elementId.node(note.on)
+      : model.blocks.has(note.on)
+      ? elementId.block(note.on)
       : model.groups.has(note.on)
       ? elementId.group(note.on)
       : model.edges.has(note.on)
@@ -506,6 +913,19 @@ export const buildElements = (
     );
   }
 
+  const frameBoxes = new Map<string, Box>();
+  for (const skeleton of skeletons) {
+    if (skeleton.type === "frame" && skeleton.id) {
+      frameBoxes.set(skeleton.id, {
+        x: skeleton.x as number,
+        y: skeleton.y as number,
+        width: skeleton.width as number,
+        height: skeleton.height as number,
+      });
+    }
+  }
+  elements = settleFrames(elements, frames, frameBoxes);
+
   // stamp identity and versions
   elements = elements.map((element) => {
     const gx = gxById.get(element.id);
@@ -524,6 +944,54 @@ export const buildElements = (
   });
 
   return { elements, warnings };
+};
+
+/**
+ * Frames come out of conversion with their children unset (and an x of 0
+ * read as missing): put back the geometry asked for, mark each member, and
+ * keep every frame's members right before it, the order the editor keeps.
+ */
+const settleFrames = (
+  elements: ExcalidrawElement[],
+  frames: Map<string, Set<string>>,
+  geometry?: Map<string, Box>,
+): ExcalidrawElement[] => {
+  if (!frames.size) {
+    return elements;
+  }
+  const memberOf = new Map<string, string>();
+  for (const [frame, members] of frames) {
+    members.forEach((m) => memberOf.set(m, frame));
+  }
+  const byId = new Map(elements.map((e) => [e.id, e]));
+  const frameFor = (e: ExcalidrawElement) => {
+    const own = memberOf.get(e.id);
+    if (own) {
+      return own;
+    }
+    const container = (e as ExcalidrawTextElement).containerId;
+    return container ? memberOf.get(container) : undefined;
+  };
+  const fixed = elements.map((e) => {
+    if (frames.has(e.id)) {
+      const want = geometry?.get(e.id);
+      return want ? ({ ...e, ...want } as ExcalidrawElement) : e;
+    }
+    const frame = frameFor(e);
+    return frame && byId.has(frame)
+      ? ({ ...e, frameId: frame } as ExcalidrawElement)
+      : e;
+  });
+  const rest = fixed.filter((e) => !frames.has(e.id) && !e.frameId);
+  const ordered = [...rest];
+  for (const frame of frames.keys()) {
+    const el = fixed.find((e) => e.id === frame);
+    if (!el) {
+      continue;
+    }
+    ordered.push(...fixed.filter((e) => e.frameId === frame), el);
+  }
+  return ordered;
 };
 
 /** The sides two boxes face each other with, as fixed points. */
@@ -559,8 +1027,8 @@ const routeElbows = (
   for (const id of edgeIds) {
     const edge = model.edges.get(id)!;
     const arrow = map.get(elementId.edge(id));
-    const a = map.get(elementId.node(edge.from));
-    const b = map.get(elementId.node(edge.to));
+    const a = map.get(endElementId(model, edge.from));
+    const b = map.get(endElementId(model, edge.to));
     if (!arrow || !a || !b) {
       continue;
     }

@@ -14,7 +14,7 @@ node agent-canvas/bin/gexcal.mjs describe
 node agent-canvas/bin/gexcal.mjs export arch.png
 ```
 
-`gexcal help` lists every command. **Agents: read [`skills/gexcal/SKILL.md`](skills/gexcal/SKILL.md)**; it is written for you and can be installed as a Claude Code skill (`ln -s "$PWD/agent-canvas/skills/gexcal" ~/.claude/skills/gexcal`).
+`gexcal help` lists every command. **Agents: read [`skills/gexcal/SKILL.md`](skills/gexcal/SKILL.md)** and, for anything beyond boxes and arrows (sequence, UML/ER, mind maps, Gantt, tables, quadrants, wireframes, slides, free sketches), [`skills/gexcal/reference.md`](skills/gexcal/reference.md); it is written for you and can be installed as a Claude Code skill (`ln -s "$PWD/agent-canvas/skills/gexcal" ~/.claude/skills/gexcal`).
 
 ## How it works
 

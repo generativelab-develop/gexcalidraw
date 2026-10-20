@@ -1,6 +1,6 @@
 ---
 name: gexcal
-description: Draw and annotate diagrams (architecture, data flow, module maps, sequences of components) on a live Excalidraw canvas through the `gexcal` CLI, and read back what a person changed. Use when asked to draw, sketch, map or diagram a codebase or system, to put notes/memos on a diagram, or to update an existing .excalidraw file.
+description: Draw and annotate on a live Excalidraw canvas through the `gexcal` CLI — architecture, flows, sequence, UML/ER and state diagrams, mind maps, org charts, Gantt/roadmaps, SWOT/Lean Canvas tables, quadrants, personas, wireframes, brainstorm boards, slides, free sketches — and read back what a person changed. Use when asked to draw, sketch, map or diagram anything, to put notes/memos on a diagram, or to update an existing .excalidraw file.
 ---
 
 # gexcal: drawing on a live Excalidraw canvas
@@ -16,6 +16,8 @@ Run it as `gexcal <command>` if it is on PATH, otherwise `node <gexcalidraw>/age
 3. **Draw in small batches** with `gexcal apply` (one JSON batch) or the one-op commands. Every command prints what it drew and any **issues**.
 4. **Look at it**: `gexcal export /tmp/view.png`, then open the PNG (Read it). Fix what looks wrong; do not report a diagram you have not looked at.
 5. **Annotate** with notes: `gexcal note "why this matters" --on <id>`.
+
+**What you can draw** — every op, layout and block, and a recipe for each kind of whiteboard drawing (architecture, flowchart, DFD, sequence, UML, ER, state, mind map, org chart, Gantt, SWOT, Lean Canvas, competitor analysis, personas, wireframes, brainstorm, slides, game design, free sketches) — is in [`reference.md`](reference.md) beside this file. Read it before drawing anything that is not a plain box-and-arrow diagram.
 
 ## Ids and ops
 
@@ -51,13 +53,14 @@ Ids are yours and stable (`[A-Za-z0-9][A-Za-z0-9_.:>-]*`; an edge is `from->to` 
 
 | op | fields | notes |
 | --- | --- | --- |
-| `node` | `id`, `label`, `shape` (rect, ellipse, diamond), `kind`, `group`, `color`, `source`, `at` [x,y] | `kind` picks a colour/shape: service api ui client user actor store db file queue topic job worker process external decision config |
-| `edge` | `from`, `to`, `label`, `line` (solid, dashed, dotted), `color`, `id` | default id is `from->to`; give an `id` for a second edge between the same pair |
-| `group` | `id`, `label`, `parent`, `color` | groups nest through `parent` |
-| `note` | `text`, `on` (a node, edge or group id), `id`, `color`, `at` | a sticky note placed beside its target, linked with a dashed line; ids default to `note-N` |
-| `remove` | `id` | removing a node removes its edges; removing a group keeps its members |
-| `layout` | `direction` (RIGHT, DOWN, LEFT, UP), `keepPinned` | re-lays out everything; `keepPinned` keeps hand-placed boxes where they are |
-| `meta` | `direction`, `theme` (clean, sketch) |  |
+| `node` | `id`, `label`, `shape` (rect, ellipse, diamond, sticky, text), `kind`, `group`, `color`, `size` (s m l xl), `fields`, `source`, `at` [x,y] | `kind` picks a colour/shape: service api ui client user actor store db file queue topic job worker process external decision config; `fields` makes a card with sections |
+| `edge` | `from`, `to`, `label`, `line` (solid, dashed, dotted), `head`, `tail`, `color`, `id` | ends may be blocks; `head`/`tail` take Excalidraw's arrowheads or `none`; default id is `from->to` |
+| `group` | `id`, `label`, `parent`, `color`, `frame`, `slide`, `layout`, `columns` | groups nest through `parent`; `frame`/`slide` draw an Excalidraw frame |
+| `note` | `text`, `on` (a node, edge, group or block id), `id`, `color`, `at` | a sticky note placed beside its target, linked with a dashed line; ids default to `note-N` |
+| `table` `quadrant` `sequence` `timeline` `wireframe` `sketch` | `id`, `group`, and the block's own description | a figure drawn from data and placed as one box (reference.md §4) |
+| `remove` | `id` | removing a node or block removes its edges; removing a group keeps its members |
+| `layout` | `direction` (RIGHT, DOWN, LEFT, UP), `algorithm` (layered, tree, radial, grid), `columns`, `keepPinned` | re-lays out everything; `keepPinned` keeps hand-placed boxes where they are |
+| `meta` | `direction`, `theme` (clean, sketch), `layout`, `columns` |  |
 | `clear` |  | removes everything you drew; never what a person drew |
 
 Pass `null` to clear an optional field (`"group": null` takes a node out of its group). Colours: blue green red yellow orange violet pink teal gray black or `#rrggbb`.
@@ -66,7 +69,7 @@ A batch is all-or-nothing: an op that names a missing node/group, reuses an id f
 
 ## From Mermaid
 
-A Mermaid flowchart (`flowchart LR` / `graph TD`) becomes the same agent-owned nodes, edges and groups, with the Mermaid ids:
+A Mermaid flowchart (`flowchart LR` / `graph TD`) becomes the same agent-owned nodes, edges and groups, with the Mermaid ids; `sequenceDiagram`, `classDiagram`, `erDiagram`, `stateDiagram-v2`, `mindmap`, `gantt` and `quadrantChart` become the matching cards, edges and blocks (reference.md §6):
 
 ```
 gexcal mermaid flow.mmd                # draw it
@@ -74,7 +77,7 @@ gexcal mermaid flow.mmd --print        # just print the ops, to edit and `apply`
 gexcal mermaid flow.mmd --prefix auth. # namespace the ids when adding to a drawing
 ```
 
-Subgraphs become groups (nested ones too), `{}` nodes diamonds, `(( ))` ellipses, `-.->` dashed edges; styles and classDefs are not carried over. Other Mermaid diagram types are refused.
+Subgraphs become groups (nested ones too), `{}` nodes diamonds, `(( ))` ellipses, `-.->` dashed edges; styles and classDefs are not carried over. Other Mermaid diagram types are refused with the list of supported ones.
 
 ## Placement rules (what the canvas does for you)
 
