@@ -22,10 +22,38 @@ export const mermaidLines = (definition: string) => {
   if (front) {
     text = text.slice(front[0].length);
   }
+  if (!text.trim().includes("\n")) {
+    // a definition written on one line (a shell that refuses a command
+    // spanning lines) separates its statements with `;`, as Mermaid allows
+    text = splitStatements(text).join("\n");
+  }
   return text
     .split("\n")
     .map((line) => line.replace(/%%.*$/, "").replace(/\s+$/, ""))
     .filter((line) => line.trim());
+};
+
+/** `;`-separated statements, leaving a `;` inside quotes or brackets alone. */
+const splitStatements = (line: string) => {
+  const out: string[] = [];
+  let depth = 0;
+  let quoted = false;
+  let start = 0;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      quoted = !quoted;
+    } else if (!quoted && (c === "[" || c === "(" || c === "{")) {
+      depth++;
+    } else if (!quoted && (c === "]" || c === ")" || c === "}")) {
+      depth = Math.max(0, depth - 1);
+    } else if (!quoted && depth === 0 && c === ";") {
+      out.push(line.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(line.slice(start).trim());
+  return out.filter((s) => s);
 };
 
 /** FNV-1a, base 36: a short stable tag for a name with characters ids lack. */

@@ -454,6 +454,17 @@ describe("wireframe dashboards", () => {
 });
 
 describe("mermaid charts, journeys, boards and timelines", () => {
+  it("reads a definition written on one line with `;` between statements", () => {
+    expect(mermaidLines('pie title 점검; "A; B" : 3; "C" : 1')).toEqual([
+      "pie title 점검",
+      '"A; B" : 3',
+      '"C" : 1',
+    ]);
+    expect(mermaidLines("sequenceDiagram; A->>B: hi; B-->>A: ok").length).toBe(
+      3,
+    );
+  });
+
   it("reads a pie chart", () => {
     const [op] = pieOps(
       mermaidLines('pie title 반려동물\n  "개" : 386\n  "고양이" : 85'),
