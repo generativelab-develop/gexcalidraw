@@ -10,7 +10,7 @@ import type {
 
 import { summarizeBlock } from "./blocks";
 import { segmentHitsBox } from "./geometry";
-import { elementId, gxOf, isAgentOwned, readModel } from "./model";
+import { elementId, gxOf, isAgentOwned, readModel, widgetEnd } from "./model";
 
 import type { Model } from "./model";
 
@@ -122,8 +122,12 @@ export const findIssues = (
     const points = arrow.points.map(
       ([px, py]) => [arrow.x + px, arrow.y + py] as [number, number],
     );
+    // a widget's edge leaves through its own screen
+    const owners = [edge.from, edge.to].map(
+      (end) => widgetEnd(model, end)?.block ?? end,
+    );
     for (const node of nodes) {
-      if (node.id === edge.from || node.id === edge.to) {
+      if (owners.includes(node.id)) {
         continue;
       }
       const hit = points.some(

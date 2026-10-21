@@ -172,11 +172,11 @@ describe("blocks", () => {
       },
       ctx,
     );
-    expect(drawing.items[0]).toMatchObject({ key: "box", w: 390 });
+    expect(drawing.items[0]).toMatchObject({ key: "box", w: 375 });
     expect(drawing.items[1]).toMatchObject({
       kind: "frame",
       name: "Login",
-      w: 390,
+      w: 375,
     });
     const ok = keyed(drawing.items, "w2-0") as ShapeItem;
     const cancel = keyed(drawing.items, "w2-1") as ShapeItem;

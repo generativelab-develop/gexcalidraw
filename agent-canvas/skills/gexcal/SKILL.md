@@ -53,13 +53,13 @@ Ids are yours and stable (`[A-Za-z0-9][A-Za-z0-9_.:>-]*`; an edge is `from->to` 
 
 | op | fields | notes |
 | --- | --- | --- |
-| `node` | `id`, `label`, `shape` (rect, ellipse, diamond, sticky, text), `kind`, `group`, `color`, `size` (s m l xl), `fields`, `source`, `at` [x,y] | `kind` picks a colour/shape: service api ui client user actor store db file queue topic job worker process external decision config; `fields` makes a card with sections |
-| `edge` | `from`, `to`, `label`, `line` (solid, dashed, dotted), `head`, `tail`, `color`, `id` | ends may be blocks; `head`/`tail` take Excalidraw's arrowheads or `none`; default id is `from->to` |
+| `node` | `id`, `label`, `shape`, `kind`, `group`, `color`, `size` (s m l xl), `fields`, `link`, `source`, `at` [x,y] | shapes: rect ellipse circle diamond pill parallelogram document cylinder datastore hexagon actor bar box3d folder component cloud sticky text; `kind` picks a colour/shape: service api ui client user actor store db file queue topic job worker process external decision config; `fields` makes a card with sections |
+| `edge` | `from`, `to`, `label`, `line` (solid, dashed, dotted), `head`, `tail`, `color`, `id` | ends may be blocks or `<screen>.<widget id>`; `head`/`tail` take Excalidraw's arrowheads or `none`; default id is `from->to` |
 | `group` | `id`, `label`, `parent`, `color`, `frame`, `slide`, `layout`, `columns` | groups nest through `parent`; `frame`/`slide` draw an Excalidraw frame |
 | `note` | `text`, `on` (a node, edge, group or block id), `id`, `color`, `at` | a sticky note placed beside its target, linked with a dashed line; ids default to `note-N` |
-| `table` `quadrant` `sequence` `timeline` `wireframe` `sketch` | `id`, `group`, and the block's own description | a figure drawn from data and placed as one box (reference.md §4) |
+| `table` `quadrant` `sequence` `timeline` `wireframe` `sketch` `profile` `radar` `legend` `journey` `image` | `id`, `group`, and the block's own description | a figure drawn from data and placed as one box (reference.md §4); `image` takes a file path in `src` |
 | `remove` | `id` | removing a node or block removes its edges; removing a group keeps its members |
-| `layout` | `direction` (RIGHT, DOWN, LEFT, UP), `algorithm` (layered, tree, radial, grid), `columns`, `keepPinned` | re-lays out everything; `keepPinned` keeps hand-placed boxes where they are |
+| `layout` | `direction` (RIGHT, DOWN, LEFT, UP), `algorithm` (layered, tree, radial, grid, lanes), `columns`, `keepPinned` | re-lays out everything; `keepPinned` keeps hand-placed boxes where they are |
 | `meta` | `direction`, `theme` (clean, sketch), `layout`, `columns` |  |
 | `clear` |  | removes everything you drew; never what a person drew |
 

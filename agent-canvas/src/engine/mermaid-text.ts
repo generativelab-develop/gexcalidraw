@@ -62,15 +62,16 @@ const unquote = (s: string) =>
 
 // ------------------------------------------------------------- sequence
 
-const ARROWS: [RegExp, LineStyle, Head][] = [
-  [/^-->>/, "dashed", "arrow"],
-  [/^->>/, "solid", "arrow"],
-  [/^--x/, "dashed", "bar"],
-  [/^-x/, "solid", "bar"],
-  [/^--\)/, "dashed", "triangle_outline"],
-  [/^-\)/, "solid", "triangle_outline"],
-  [/^-->/, "dashed", "triangle_outline"],
-  [/^->/, "solid", "triangle_outline"],
+/** Mermaid's arrows as UML message kinds (and the plain lines it also has). */
+const ARROWS: [RegExp, Record<string, unknown>][] = [
+  [/^-->>/, { kind: "reply" }],
+  [/^->>/, { kind: "sync" }],
+  [/^--x/, { kind: "reply", head: "bar" }],
+  [/^-x/, { kind: "sync", head: "bar" }],
+  [/^--\)/, { kind: "async", line: "dashed" }],
+  [/^-\)/, { kind: "async" }],
+  [/^-->/, { kind: "reply", head: "none" }],
+  [/^->/, { kind: "sync", head: "none" }],
 ];
 
 export const sequenceOps = (lines: string[], prefix: string): Op[] => {
@@ -95,6 +96,10 @@ export const sequenceOps = (lines: string[], prefix: string): Op[] => {
   const into = () => (stack.length ? stack[stack.length - 1].current : root);
   let title: string | undefined;
   let autonumber = false;
+  // `create participant B` marks the next message to B; `destroy B` the next
+  // message that reaches B
+  const creating = new Set<string>();
+  const destroying = new Set<string>();
 
   for (const raw of lines.slice(1)) {
     const line = raw.trim();
@@ -104,18 +109,23 @@ export const sequenceOps = (lines: string[], prefix: string): Op[] => {
     } else if (/^autonumber\b/i.test(line)) {
       autonumber = true;
     } else if (
-      (m = line.match(/^(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$/i))
+      (m = line.match(
+        /^(create\s+)?(participant|actor)\s+(.+?)(?:\s+as\s+(.+))?$/i,
+      ))
     ) {
-      known(
-        m[2],
-        m[3] ? unquote(m[3]) : undefined,
-        m[1].toLowerCase() === "actor" ? "actor" : undefined,
+      const id = known(
+        m[3],
+        m[4] ? unquote(m[4]) : undefined,
+        m[2].toLowerCase() === "actor" ? "actor" : undefined,
       );
-    } else if (
-      /^(activate|deactivate|create|destroy|box|link|links|properties|details)\b/i.test(
-        line,
-      )
-    ) {
+      if (m[1]) {
+        creating.add(id);
+      }
+    } else if ((m = line.match(/^destroy\s+(\S+)$/i))) {
+      destroying.add(known(m[1]));
+    } else if ((m = line.match(/^(activate|deactivate)\s+(\S+)$/i))) {
+      into().push({ [m[1].toLowerCase()]: known(m[2]) });
+    } else if (/^(box|end box|link|links|properties|details)\b/i.test(line)) {
       // presentation only
     } else if (
       (m = line.match(/^note\s+(right of|left of|over)\s+([^:]+):\s*(.*)$/i))
@@ -154,19 +164,23 @@ export const sequenceOps = (lines: string[], prefix: string): Op[] => {
       }
     } else {
       m = line.match(
-        /^([^-+:]+?)\s*(-->>|->>|--x|-x|--\)|-\)|-->|->)\s*[+-]?\s*([^:]+?)\s*(?::\s*(.*))?$/,
+        /^([^-+:]+?)\s*(-->>|->>|--x|-x|--\)|-\)|-->|->)\s*([+-])?\s*([^:]+?)\s*(?::\s*(.*))?$/,
       );
       if (!m) {
         refuse(`cannot read the sequence line "${line}"`);
       }
-      const [, from, arrow, to, label] = m!;
-      const [, lineStyle, head] = ARROWS.find(([re]) => re.test(arrow))!;
+      const [, from, arrow, sign, to, label] = m!;
+      const [, style] = ARROWS.find(([re]) => re.test(arrow))!;
+      const target = known(to);
       into().push({
         from: known(from),
-        to: known(to),
+        to: target,
         label: label?.replace(/<br\s*\/?>/gi, "\n") || undefined,
-        line: lineStyle,
-        head,
+        ...style,
+        ...(sign === "+" ? { activate: true } : null),
+        ...(sign === "-" ? { deactivate: true } : null),
+        ...(creating.delete(target) ? { create: true } : null),
+        ...(destroying.delete(target) ? { destroy: true } : null),
       });
     }
   }

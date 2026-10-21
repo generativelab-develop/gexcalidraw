@@ -4,9 +4,10 @@
 // at, so the agent learns the id it got wrong instead of a silently different
 // drawing.
 
-import { BLOCK_TYPES, BlockError, validateBlock } from "./blocks";
+import { BLOCK_TYPES, BlockError, validateBlock, widgetIds } from "./blocks";
 import { MermaidError } from "./mermaid-text";
-import { ID_PATTERN } from "./model";
+import { ID_PATTERN, widgetEnd } from "./model";
+import { OUTLINE_SHAPES } from "./shapes";
 
 import type {
   BlockModel,
@@ -37,6 +38,7 @@ export type Op =
       color?: string | null;
       fields?: string[] | string[][] | null;
       size?: TextSize | null;
+      link?: string | null;
       at?: [number, number];
       width?: number;
       height?: number;
@@ -74,6 +76,7 @@ export type Op =
       text: string;
       on?: string | null;
       color?: string | null;
+      link?: string | null;
       at?: [number, number];
     }
   | { op: "remove"; id: string }
@@ -98,13 +101,36 @@ export type ApplyOutcome = {
   removed: Set<string>;
   warnings: string[];
   layout: null | { keepPinned: boolean };
+  /** pictures an image op brought, to add to the scene's files */
+  files: { id: string; dataURL: string; mimeType: string }[];
 };
 
-const SHAPES: Shape[] = ["rect", "ellipse", "diamond", "sticky", "text"];
+/** FNV-1a over the data URL: one file id per picture, whoever sends it. */
+const fileIdOf = (dataURL: string) => {
+  let a = 0x811c9dc5;
+  let b = 0x01000193;
+  for (let i = 0; i < dataURL.length; i++) {
+    const c = dataURL.charCodeAt(i);
+    a = Math.imul(a ^ c, 0x01000193) >>> 0;
+    b = Math.imul(b ^ c, 0x811c9dc5) >>> 0;
+  }
+  return `gx-img-${a.toString(16).padStart(8, "0")}${b
+    .toString(16)
+    .padStart(8, "0")}`;
+};
+
+const SHAPES: Shape[] = [
+  "rect",
+  "ellipse",
+  "diamond",
+  "sticky",
+  "text",
+  ...OUTLINE_SHAPES,
+];
 const LINES: LineStyle[] = ["solid", "dashed", "dotted"];
 const DIRECTIONS: Direction[] = ["RIGHT", "DOWN", "LEFT", "UP"];
 const THEMES: Theme[] = ["clean", "sketch"];
-export const LAYOUTS: Layout[] = ["layered", "tree", "radial", "grid"];
+export const LAYOUTS: Layout[] = ["layered", "tree", "radial", "grid", "lanes"];
 const SIZES: TextSize[] = ["s", "m", "l", "xl"];
 export const HEADS: Head[] = [
   "none",
@@ -215,6 +241,22 @@ const checkLayout = (
   }
 };
 
+/** A link opens from the element: a web address or any short reference. */
+const checkLink = <T>(index: number, op: unknown, link: T): T => {
+  if (
+    link !== undefined &&
+    link !== null &&
+    (typeof link !== "string" || !link.trim() || link.length > 2000)
+  ) {
+    fail(
+      index,
+      op,
+      "link is a non-empty string (a URL) of at most 2000 characters",
+    );
+  }
+  return link;
+};
+
 const isFrame = (model: Model, id: string | undefined) =>
   !!id && !!model.groups.get(id)?.frame;
 
@@ -249,6 +291,7 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
     removed: new Set(),
     warnings: [],
     layout: null,
+    files: [],
   };
 
   // edges, notes and groups may name things created later in the same batch
@@ -293,6 +336,7 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           color: optional(op.color, prev?.color),
           fields: op.fields === undefined ? prev?.fields : fields,
           size: optional(op.size, prev?.size),
+          link: optional(checkLink(index, op, op.link), prev?.link),
           x: op.at ? op.at[0] : prev?.x,
           y: op.at ? op.at[1] : prev?.y,
           width: op.width ?? prev?.width,
@@ -300,8 +344,12 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           pinned: op.at ? true : prev?.pinned ?? false,
           style: op.color !== undefined ? undefined : prev?.style,
         };
-        if (node.fields && (node.shape === "sticky" || node.shape === "text")) {
-          fail(index, op, `a ${node.shape} node cannot carry fields`);
+        if (node.fields && node.shape !== "rect") {
+          fail(
+            index,
+            op,
+            `a ${node.shape} node cannot carry fields (a card is a rect)`,
+          );
         }
         if (
           op.label !== undefined ||
@@ -373,8 +421,29 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
         };
         deferred.push(() => {
           for (const end of [edge.from, edge.to]) {
-            if (!model.nodes.has(end) && !model.blocks.has(end)) {
-              fail(index, op, `edge end "${end}" is not a node or a block`);
+            if (model.nodes.has(end) || model.blocks.has(end)) {
+              continue;
+            }
+            const widget = widgetEnd(model, end);
+            if (!widget) {
+              fail(
+                index,
+                op,
+                `edge end "${end}" is not a node, a block or <screen>.<widget id>`,
+              );
+            }
+            if (
+              !widgetIds(model.blocks.get(widget!.block)!.spec).has(
+                widget!.widget,
+              )
+            ) {
+              fail(
+                index,
+                op,
+                `screen "${widget!.block}" has no widget with id "${
+                  widget!.widget
+                }"`,
+              );
             }
           }
         });
@@ -459,6 +528,7 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           text: op.text,
           on: optional(op.on, prev?.on),
           color: optional(op.color, prev?.color),
+          link: optional(checkLink(index, op, op.link), prev?.link),
           x: op.at ? op.at[0] : prev?.x,
           y: op.at ? op.at[1] : prev?.y,
           width: op.text !== prev?.text ? undefined : prev?.width,
@@ -499,8 +569,10 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           model.edges.delete(op.id);
         } else if (kind === "block") {
           model.blocks.delete(op.id);
+          const inside = (end: string) =>
+            end === op.id || end.startsWith(`${op.id}.`);
           for (const edge of [...model.edges.values()]) {
-            if (edge.from === op.id || edge.to === op.id) {
+            if (inside(edge.from) || inside(edge.to)) {
               model.edges.delete(edge.id);
               outcome.removed.add(edge.id);
             }
@@ -623,6 +695,10 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           fail(index, op, `"${raw.id}" is a ${prev.type}, not a ${type}`);
         }
         const { op: _op, id: _id, group, ...spec } = raw;
+        if (type === "image" && spec.src === undefined && prev) {
+          // a new label or width for a picture already in the scene
+          spec.fileId = prev.spec.fileId;
+        }
         try {
           validateBlock(type, spec);
         } catch (error) {
@@ -630,6 +706,25 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
             fail(index, op, error.message);
           }
           throw error;
+        }
+        if (type === "image") {
+          // the picture goes to the scene's files; the description keeps its id
+          if (typeof spec.src === "string") {
+            const src = spec.src as string;
+            const fileId = fileIdOf(src);
+            outcome.files.push({
+              id: fileId,
+              dataURL: src,
+              mimeType: src.slice(5, src.indexOf(";")),
+            });
+            delete spec.src;
+            delete spec.aspect;
+            spec.fileId = fileId;
+          } else if (prev) {
+            spec.fileId = prev.spec.fileId;
+            spec.aspect = prev.spec.aspect;
+            spec.naturalWidth = prev.spec.naturalWidth;
+          }
         }
         const block: BlockModel = {
           id: raw.id,

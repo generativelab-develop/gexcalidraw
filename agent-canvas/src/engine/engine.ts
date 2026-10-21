@@ -82,6 +82,9 @@ export class Engine {
     const live = all.filter((e) => !e.isDeleted);
     const model = cloneModel(readModel(live));
     const outcome = applyOps(model, ops);
+    if (outcome.files.length) {
+      await this.addPictures(model, outcome.files);
+    }
     // a node that changed may have changed size: its routes no longer fit
     for (const edge of model.edges.values()) {
       if (outcome.touched.has(edge.from) || outcome.touched.has(edge.to)) {
@@ -94,7 +97,7 @@ export class Engine {
     const theme = model.meta.theme;
     const sizes = new Map<string, Size>();
     for (const node of model.nodes.values()) {
-      sizes.set(node.id, measureNode(node, theme));
+      sizes.set(node.id, measureNode(node, theme, model.meta.direction));
     }
     const drawings = new Map<string, Drawing>();
     for (const block of model.blocks.values()) {
@@ -183,6 +186,41 @@ export class Engine {
       warnings: [...outcome.warnings, ...warnings],
       description: describeScene([...agent, ...others]).text,
     };
+  }
+
+  /**
+   * Adds an image op's pictures to the scene's files and records each image
+   * block's proportions, which the browser knows once it has decoded it.
+   */
+  private async addPictures(
+    model: Model,
+    files: { id: string; dataURL: string; mimeType: string }[],
+  ) {
+    this.api.addFiles(
+      files.map((f) => ({
+        id: f.id as never,
+        dataURL: f.dataURL as never,
+        mimeType: f.mimeType as never,
+        created: Date.now(),
+      })),
+    );
+    for (const file of files) {
+      const size = await new Promise<{ width: number; height: number }>(
+        (resolve) => {
+          const img = new Image();
+          img.onload = () =>
+            resolve({ width: img.naturalWidth, height: img.naturalHeight });
+          img.onerror = () => resolve({ width: 480, height: 360 });
+          img.src = file.dataURL;
+        },
+      );
+      for (const block of model.blocks.values()) {
+        if (block.type === "image" && block.spec.fileId === file.id) {
+          block.spec.aspect = size.height / Math.max(1, size.width);
+          block.spec.naturalWidth = size.width;
+        }
+      }
+    }
   }
 
   /** A Mermaid diagram, as ops; applied unless only the ops are wanted. */

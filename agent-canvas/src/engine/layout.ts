@@ -22,7 +22,7 @@ import {
   straightRoute,
 } from "./geometry";
 
-import { endOf } from "./model";
+import { endOf, widgetEnd } from "./model";
 
 import type { Box, Outline, Point } from "./geometry";
 import type { Direction, Layout, Model } from "./model";
@@ -141,6 +141,10 @@ export const algorithmOf = (model: Model, container: Container): Layout => {
     return group.layout;
   }
   const inherited = algorithmOf(model, group?.parent);
+  if (inherited === "lanes") {
+    // a lane's members are placed by the lanes around it
+    return "layered";
+  }
   if (inherited !== "grid") {
     return inherited;
   }
@@ -333,14 +337,20 @@ export const fullLayout = async (
       if (!endOf(model, edge.from) || !endOf(model, edge.to)) {
         continue;
       }
-      if (!inRun(edge.from) || !inRun(edge.to)) {
+      // an edge from a widget on a screen places the screens like one between
+      // them, but the editor draws it, from the widget
+      const fromWidget = widgetEnd(model, edge.from);
+      const toWidget = widgetEnd(model, edge.to);
+      const from = fromWidget?.block ?? edge.from;
+      const to = toWidget?.block ?? edge.to;
+      if (!inRun(from) || !inRun(to) || from === to) {
         continue;
       }
       const label = edgeLabelSizes.get(edge.id);
       root.edges!.push({
-        id: `e:${edge.id}`,
-        sources: [`n:${edge.from}`],
-        targets: [`n:${edge.to}`],
+        id: `${fromWidget || toWidget ? "w" : "e"}:${edge.id}`,
+        sources: [`n:${from}`],
+        targets: [`n:${to}`],
         labels: label
           ? [
               {
@@ -366,7 +376,7 @@ export const fullLayout = async (
     walk(laid);
     for (const e of (laid.edges ?? []) as ElkEdge[]) {
       const section = e.sections?.[0];
-      if (!section) {
+      if (!section || e.id.startsWith("w:")) {
         continue;
       }
       routes.set(e.id.slice(2), {
@@ -474,11 +484,156 @@ export const fullLayout = async (
     };
   };
 
+  /**
+   * Swimlanes: the container's groups are lanes, one per actor, team or
+   * system. The steps in every lane are ranked together, so the order of the
+   * process reads along the lanes, and each step stays in its own lane.
+   */
+  const layLanes = async (container: Container) => {
+    const pad = padOf(container);
+    const { groups: lanes, blocks, nodes } = membersOf(container);
+    const horizontal = direction === "RIGHT" || direction === "LEFT";
+    const laneOf = new Map<string, string>();
+    for (const lane of lanes) {
+      const inner = membersOf(lane.id);
+      for (const g of inner.groups) {
+        await layContainer(g.id);
+      }
+      for (const item of [...inner.groups, ...inner.nodes, ...inner.blocks]) {
+        laneOf.set(item.id, lane.id);
+      }
+    }
+    // things outside every lane are laid as their own lane, first
+    for (const item of [...blocks, ...nodes]) {
+      laneOf.set(item.id, "");
+    }
+    const leaves = [...laneOf.keys()];
+    const root: ElkNode = {
+      id: "root",
+      children: leaves.map((id) => ({ id: `n:${id}`, ...sizeOf(id) })),
+      layoutOptions: {
+        "elk.algorithm": "layered",
+        "elk.direction": direction,
+        "elk.spacing.nodeNode": String(GAP),
+        "elk.layered.spacing.nodeNodeBetweenLayers": String(LAYER_GAP),
+        "elk.layered.considerModelOrder.strategy": "NODES_AND_EDGES",
+      },
+      edges: [],
+    };
+    const ids = new Set(leaves);
+    for (const edge of model.edges.values()) {
+      if (ids.has(edge.from) && ids.has(edge.to)) {
+        root.edges!.push({
+          id: `e:${edge.id}`,
+          sources: [`n:${edge.from}`],
+          targets: [`n:${edge.to}`],
+        });
+      }
+    }
+    const laid = (await elk.layout(root as never)) as unknown as ElkNode;
+    const main = new Map<string, number>();
+    for (const child of laid.children ?? []) {
+      main.set(child.id.slice(2), horizontal ? child.x ?? 0 : child.y ?? 0);
+    }
+    const mainSize = (id: string) =>
+      horizontal ? sizeOf(id).width : sizeOf(id).height;
+    const crossSize = (id: string) =>
+      horizontal ? sizeOf(id).height : sizeOf(id).width;
+    const minMain = Math.min(0, ...main.values());
+    const extent = Math.max(
+      240,
+      ...leaves.map((id) => main.get(id)! - minMain + mainSize(id)),
+    );
+    let cursor = 0;
+    const order = [
+      ...(leaves.some((id) => laneOf.get(id) === "") ? [""] : []),
+      ...lanes.map((l) => l.id),
+    ];
+    for (const lane of order) {
+      const members = leaves
+        .filter((id) => laneOf.get(id) === lane)
+        .sort((a, b) => main.get(a)! - main.get(b)!);
+      // tracks inside the lane: two steps at the same rank sit side by side
+      const tracks: { end: number; size: number; items: string[] }[] = [];
+      for (const id of members) {
+        const start = main.get(id)! - minMain;
+        let track = tracks.find((t) => t.end + GAP / 2 <= start);
+        if (!track) {
+          track = { end: -Infinity, size: 0, items: [] };
+          tracks.push(track);
+        }
+        track.end = start + mainSize(id);
+        track.size = Math.max(track.size, crossSize(id));
+        track.items.push(id);
+      }
+      const inLane = lane !== "";
+      const before = inLane ? (horizontal ? GROUP_PAD.top : GROUP_PAD.top) : 0;
+      let offset =
+        inLane && horizontal ? GROUP_PAD.top : inLane ? GROUP_PAD.side : 0;
+      for (const track of tracks) {
+        for (const id of track.items) {
+          const along =
+            main.get(id)! -
+            minMain +
+            (inLane ? (horizontal ? GROUP_PAD.side : before) : 0);
+          const across = offset + (track.size - crossSize(id)) / 2;
+          local.set(id, horizontal ? [along, across] : [across, along]);
+        }
+        offset += track.size + GAP / 2;
+      }
+      const cross = Math.max(
+        inLane ? 80 : 0,
+        offset -
+          GAP / 2 +
+          (inLane ? (horizontal ? GROUP_PAD.bottom : GROUP_PAD.side) : 0),
+      );
+      if (inLane) {
+        const length =
+          extent +
+          (horizontal ? GROUP_PAD.side * 2 : GROUP_PAD.top + GROUP_PAD.bottom);
+        local.set(
+          lane,
+          horizontal
+            ? [pad.side, pad.top + cursor]
+            : [pad.side + cursor, pad.top],
+        );
+        groupSize.set(
+          lane,
+          horizontal
+            ? { width: length, height: cross }
+            : { width: cross, height: length },
+        );
+      } else {
+        // loose steps: shift them by the container's padding
+        for (const id of members) {
+          const [lx, ly] = local.get(id)!;
+          local.set(
+            id,
+            horizontal
+              ? [lx + pad.side, ly + pad.top + cursor]
+              : [lx + pad.side + cursor, ly + pad.top],
+          );
+        }
+      }
+      cursor += cross + (inLane ? 0 : GAP);
+    }
+    lanesOf.add(container ?? "");
+    const length =
+      extent +
+      (horizontal ? GROUP_PAD.side * 2 : GROUP_PAD.top + GROUP_PAD.bottom);
+    return horizontal
+      ? { width: length + pad.side * 2, height: cursor + pad.top + pad.bottom }
+      : { width: cursor + pad.side * 2, height: length + pad.top + pad.bottom };
+  };
+  const lanesOf = new Set<string>();
+
   const layContainer = async (container: Container): Promise<Size> => {
     const layout = algorithmOf(model, container);
     const size =
       layout === "layered"
         ? await layLayered(container)
+        : layout === "lanes"
+        ? await layLanes(container)
         : await layFlat(container, layout);
     if (container !== undefined) {
       const min = minimumOf(model, container);
@@ -529,6 +684,16 @@ export const fullLayout = async (
     if (!(opts.keepPinned && group.pinned)) {
       group.pinned = false;
     }
+    // where the layout put the group; fitting it to its members refines this,
+    // and an empty group keeps it
+    const [gx, gy] = absolute(group.id);
+    const size = groupSize.get(group.id);
+    if (size) {
+      group.x = gx;
+      group.y = gy;
+      group.width = size.width;
+      group.height = size.height;
+    }
   }
 
   const routed = new Set<string>();
@@ -568,6 +733,27 @@ export const fullLayout = async (
     }
   }
   fitGroups(model);
+  // lanes of one container are bands of one length
+  const horizontal = direction === "RIGHT" || direction === "LEFT";
+  for (const owner of lanesOf) {
+    const lanes = [...model.groups.values()].filter(
+      (g) => (g.parent ?? "") === owner && g.x !== undefined,
+    );
+    if (!lanes.length) {
+      continue;
+    }
+    if (horizontal) {
+      const x1 = Math.min(...lanes.map((g) => g.x!));
+      const x2 = Math.max(...lanes.map((g) => g.x! + g.width!));
+      lanes.forEach((g) => Object.assign(g, { x: x1, width: x2 - x1 }));
+    } else {
+      const y1 = Math.min(...lanes.map((g) => g.y!));
+      const y2 = Math.max(...lanes.map((g) => g.y! + g.height!));
+      lanes.forEach((g) => Object.assign(g, { y: y1, height: y2 - y1 }));
+    }
+  }
+  // the lanes' container was fitted to the lanes before they were evened out,
+  // and evening them out never leaves its bounds
 };
 
 type ElkPoint = { x: number; y: number };

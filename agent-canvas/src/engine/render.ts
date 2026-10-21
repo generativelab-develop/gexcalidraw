@@ -31,6 +31,12 @@ import type {
 import type { LocalPoint } from "@excalidraw/math";
 
 import { blockTexts, drawBlock } from "./blocks";
+import {
+  isOutlineShape,
+  outlineItems,
+  outlineLabel,
+  outlineSize,
+} from "./shapes";
 
 import { closestEdgePoint, centerOf, straightRoute } from "./geometry";
 import { GROUP_PAD } from "./layout";
@@ -41,6 +47,7 @@ import type { Box } from "./geometry";
 import type { Size } from "./layout";
 import type {
   BlockModel,
+  Direction,
   GxData,
   Model,
   NodeModel,
@@ -152,11 +159,15 @@ export const nodeShape = (node: NodeModel) =>
 /** The outline the router ends arrows on. */
 export const nodeOutline = (node: NodeModel) => {
   const shape = nodeShape(node);
-  return shape === "ellipse" || shape === "diamond" ? shape : "rect";
+  return shape === "ellipse" || shape === "diamond"
+    ? shape
+    : shape === "circle"
+    ? "ellipse"
+    : "rect";
 };
 
 const excalidrawType = (shape: NodeModel["shape"]) =>
-  shape === "rect" || shape === "text"
+  shape === "rect" || shape === "text" || isOutlineShape(shape)
     ? "rectangle"
     : shape === "sticky"
     ? "stickynote"
@@ -183,13 +194,25 @@ export const loadFonts = async (model: Model) => {
   await Fonts.loadElementsFonts(probe);
 };
 
-export const measureNode = (node: NodeModel, theme: Theme): Size => {
+export const measureNode = (
+  node: NodeModel,
+  theme: Theme,
+  direction: Direction = "RIGHT",
+): Size => {
   if (node.width !== undefined && node.height !== undefined) {
     return { width: node.width, height: node.height };
   }
   const fontFamily = fontFor(theme);
   const shape = nodeShape(node);
   const fontSize = fontSizeOf(node);
+  if (isOutlineShape(shape)) {
+    const size = outlineSize(
+      shape,
+      measureText_(node.label, theme, fontSize),
+      direction,
+    );
+    return { width: Math.ceil(size.width), height: Math.ceil(size.height) };
+  }
   if (node.fields) {
     const card = cardGeometry(node, theme);
     return { width: card.width, height: card.height };
@@ -353,7 +376,14 @@ export const buildElements = (
         ? elementId.block(block.id)
         : elementId.blockPart(block.id, item.key);
       const gx: GxData = own ? blockGx : { role: "block-part", id: block.id };
-      const skeleton = itemSkeleton(item, id, ox, oy, together);
+      const skeleton = itemSkeleton(
+        item,
+        id,
+        ox,
+        oy,
+        together,
+        drawing.roughness,
+      );
       if (!skeleton) {
         continue;
       }
@@ -375,6 +405,7 @@ export const buildElements = (
     ox: number,
     oy: number,
     groupIds: string[],
+    rough: number = roughness,
   ): ExcalidrawElementSkeleton | null => {
     switch (item.kind) {
       case "frame":
@@ -429,8 +460,16 @@ export const buildElements = (
           strokeColor: item.stroke,
           strokeStyle: item.line ?? "solid",
           strokeWidth: item.strokeWidth ?? 2,
-          roughness,
+          roughness: rough,
           roundness: null,
+          opacity: item.opacity ?? 100,
+          ...(item.closed
+            ? {
+                polygon: true,
+                backgroundColor: item.fill ?? "transparent",
+                fillStyle: "solid",
+              }
+            : null),
           ...(item.kind === "arrow"
             ? {
                 elbowed: false,
@@ -443,6 +482,40 @@ export const buildElements = (
           groupIds,
         } as unknown as ExcalidrawElementSkeleton;
       }
+      case "freedraw": {
+        const [x0, y0] = item.points[0];
+        const rel = item.points.map(([px, py]) => [px - x0, py - y0]);
+        const xs = rel.map((p) => p[0]);
+        const ys = rel.map((p) => p[1]);
+        return {
+          type: "freedraw",
+          id,
+          x: ox + x0,
+          y: oy + y0,
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+          points: rel,
+          pressures: [],
+          simulatePressure: true,
+          strokeColor: item.stroke,
+          strokeWidth: item.strokeWidth ?? 2,
+          opacity: item.opacity ?? 100,
+          groupIds,
+        } as unknown as ExcalidrawElementSkeleton;
+      }
+      case "image":
+        return {
+          type: "image",
+          id,
+          x: ox + item.x,
+          y: oy + item.y,
+          width: item.w,
+          height: item.h,
+          fileId: item.fileId,
+          status: "saved",
+          scale: [1, 1],
+          groupIds,
+        } as unknown as ExcalidrawElementSkeleton;
       default:
         return {
           type: item.kind === "rect" ? "rectangle" : item.kind,
@@ -456,7 +529,7 @@ export const buildElements = (
           fillStyle: item.fillStyle ?? "solid",
           strokeStyle: item.line ?? "solid",
           strokeWidth: item.strokeWidth ?? 2,
-          roughness,
+          roughness: rough,
           opacity: item.opacity ?? 100,
           roundness: item.rounded && item.kind === "rect" ? { type: 3 } : null,
           groupIds,
@@ -640,7 +713,7 @@ export const buildElements = (
           roundness: { type: 3 },
           groupIds: together,
           ...styleProps(node.style),
-          link: null,
+          link: node.link ?? null,
         } as ExcalidrawElementSkeleton,
         gx,
       );
@@ -708,6 +781,53 @@ export const buildElements = (
     const sticky = shape === "sticky";
     const text = shape === "text";
     inFrame(node.group, id, elementId.nodeLabel(node.id));
+    if (isOutlineShape(shape)) {
+      // the symbol's lines first, then the invisible box that holds the
+      // label and that arrows bind to, all moving as one
+      const together = [`gx-ng-${node.id}`];
+      for (const item of outlineItems(
+        shape,
+        node.width!,
+        node.height!,
+        color,
+      )) {
+        const partId = elementId.nodePart(node.id, `s-${item.key}`);
+        const skeleton = itemSkeleton(item, partId, node.x!, node.y!, together);
+        if (skeleton) {
+          inFrame(node.group, partId);
+          add(skeleton, { role: "node-part", id: node.id });
+        }
+      }
+      const place = outlineLabel(shape);
+      add(
+        {
+          type: "rectangle",
+          id,
+          x: node.x!,
+          y: node.y!,
+          width: node.width!,
+          height: node.height!,
+          strokeColor: "transparent",
+          backgroundColor: "transparent",
+          fillStyle: "solid",
+          strokeWidth: 2,
+          roughness,
+          roundness: null,
+          groupIds: together,
+          link: node.link ?? null,
+          label: {
+            text: node.label,
+            id: elementId.nodeLabel(node.id),
+            fontSize,
+            fontFamily,
+            verticalAlign: place.verticalAlign,
+            strokeColor: place.hidden ? "transparent" : color.stroke,
+          },
+        } as ExcalidrawElementSkeleton,
+        gx,
+      );
+      continue;
+    }
     add(
       {
         type: excalidrawType(shape),
@@ -728,7 +848,7 @@ export const buildElements = (
         roundness: shape === "rect" ? { type: 3 } : null,
         ...(sticky ? { baseHeight: node.height! } : null),
         ...(text ? null : styleProps(node.style)),
-        link: null,
+        link: node.link ?? null,
         label: {
           text: node.label,
           id: elementId.nodeLabel(node.id),
@@ -838,6 +958,7 @@ export const buildElements = (
         height: 80,
         backgroundColor: NOTE_COLORS[note.color ?? "yellow"] ?? note.color,
         roughness,
+        link: note.link ?? null,
         label: {
           text: note.text,
           id: elementId.noteLabel(note.id),

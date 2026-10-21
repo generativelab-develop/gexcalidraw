@@ -103,6 +103,47 @@ const call = async (state, route, body) => {
 const request = async (kind, payload) =>
   (await call(server(), "request", { kind, payload })).result;
 
+const IMAGE_TYPES = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+  ".svg": "image/svg+xml",
+};
+// the canvas takes a picture as a data URL; this keeps an agent from
+// base64-encoding a file itself
+const MAX_IMAGE_BYTES = 650_000;
+
+/** An image op whose `src` names a file gets the file's data URL instead. */
+const inlineImage = (op) => {
+  if (
+    op?.op !== "image" ||
+    typeof op.src !== "string" ||
+    op.src.startsWith("data:")
+  ) {
+    return op;
+  }
+  const file = path.resolve(op.src);
+  const type = IMAGE_TYPES[path.extname(file).toLowerCase()];
+  if (!type) {
+    die(`image ${op.src}: only ${Object.keys(IMAGE_TYPES).join(" ")} files`, 2);
+  }
+  let data;
+  try {
+    data = fs.readFileSync(file);
+  } catch (error) {
+    die(`image ${op.src}: ${error.message}`, 2);
+  }
+  if (data.length > MAX_IMAGE_BYTES) {
+    die(
+      `image ${op.src} is ${data.length} bytes; at most ${MAX_IMAGE_BYTES} (shrink it first)`,
+      2,
+    );
+  }
+  return { ...op, src: `data:${type};base64,${data.toString("base64")}` };
+};
+
 const parsePoint = (value, flag) => {
   if (value === undefined) {
     return undefined;
@@ -435,7 +476,7 @@ const commands = {
     if (!Array.isArray(ops)) {
       die('expected {"ops": [...]} or a JSON array of ops', 2);
     }
-    await apply(ops);
+    await apply(ops.map(inlineImage));
   },
 
   async mermaid(argv) {

@@ -9,12 +9,20 @@ import type {
   ExcalidrawTextElement,
 } from "@excalidraw/element/types";
 
-export type Shape = "rect" | "ellipse" | "diamond" | "sticky" | "text";
+import type { OutlineShape } from "./shapes";
+
+export type Shape =
+  | "rect"
+  | "ellipse"
+  | "diamond"
+  | "sticky"
+  | "text"
+  | OutlineShape;
 export type Direction = "RIGHT" | "DOWN" | "LEFT" | "UP";
 export type Theme = "clean" | "sketch";
 export type LineStyle = "solid" | "dashed" | "dotted";
 /** how a container (the whole drawing, or one group) arranges its members */
-export type Layout = "layered" | "tree" | "radial" | "grid";
+export type Layout = "layered" | "tree" | "radial" | "grid" | "lanes";
 export type TextSize = "s" | "m" | "l" | "xl";
 /** an arrow end: Excalidraw's own arrowheads, or none */
 export type Head =
@@ -39,7 +47,12 @@ export type BlockType =
   | "sequence"
   | "timeline"
   | "wireframe"
-  | "sketch";
+  | "sketch"
+  | "profile"
+  | "radar"
+  | "legend"
+  | "journey"
+  | "image";
 
 export type Style = {
   strokeColor?: string;
@@ -61,6 +74,8 @@ export type NodeModel = {
   color?: string;
   /** sections under the label: a card (a UML class, an ER table, a persona) */
   fields?: string[][];
+  /** a URL or a reference the node opens */
+  link?: string;
   size?: TextSize;
   x?: number;
   y?: number;
@@ -109,6 +124,7 @@ export type GroupModel = {
 export type NoteModel = {
   id: string;
   text: string;
+  link?: string;
   on?: string;
   color?: string;
   x?: number;
@@ -236,16 +252,50 @@ export const elementId = {
   blockPart: (id: string, part: string) => `gx-b-${id}-${part}`,
 };
 
-/** What an edge may connect: a node, or a whole block (a screen, a table). */
+/**
+ * A widget inside a wireframe screen, named `<screen>.<widget id>`, when `id`
+ * is neither a node nor a block itself.
+ */
+export const widgetEnd = (
+  model: Model,
+  id: string,
+): { block: string; widget: string } | null => {
+  if (model.nodes.has(id) || model.blocks.has(id)) {
+    return null;
+  }
+  const dot = id.indexOf(".");
+  if (dot < 1) {
+    return null;
+  }
+  const block = model.blocks.get(id.slice(0, dot));
+  return block?.type === "wireframe"
+    ? { block: block.id, widget: id.slice(dot + 1) }
+    : null;
+};
+
+/**
+ * What an edge may connect: a node, a whole block (a screen, a table), or a
+ * widget on a screen, which stands in for its screen in the layout.
+ */
 export const endOf = (
   model: Model,
   id: string,
-): NodeModel | BlockModel | undefined =>
-  model.nodes.get(id) ?? model.blocks.get(id);
+): NodeModel | BlockModel | undefined => {
+  const widget = widgetEnd(model, id);
+  return widget
+    ? model.blocks.get(widget.block)
+    : model.nodes.get(id) ?? model.blocks.get(id);
+};
 
 /** The element an edge end binds to. */
-export const endElementId = (model: Model, id: string) =>
-  model.blocks.has(id) ? elementId.block(id) : elementId.node(id);
+export const endElementId = (model: Model, id: string) => {
+  const widget = widgetEnd(model, id);
+  return widget
+    ? elementId.blockPart(widget.block, `id-${widget.widget}`)
+    : model.blocks.has(id)
+    ? elementId.block(id)
+    : elementId.node(id);
+};
 
 export const gxOf = (element: ExcalidrawElement): GxData | null => {
   const gx = (element.customData as { gx?: GxData } | undefined)?.gx;
@@ -371,6 +421,7 @@ export const readModel = (elements: readonly ExcalidrawElement[]): Model => {
           color: gx.color,
           fields: gx.fields ? cardFields(gx.id, gx.fields, byId) : undefined,
           size: gx.size,
+          link: element.link ?? undefined,
           x: element.x,
           y: element.y,
           width: element.width,
@@ -426,6 +477,7 @@ export const readModel = (elements: readonly ExcalidrawElement[]): Model => {
         model.notes.set(gx.id, {
           id: gx.id,
           text: labelOf(element, byId),
+          link: element.link ?? undefined,
           on: gx.on,
           color: gx.color,
           x: element.x,
