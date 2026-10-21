@@ -47,6 +47,7 @@ import type { Box } from "./geometry";
 import type { Size } from "./layout";
 import type {
   BlockModel,
+  Border,
   Direction,
   GxData,
   Model,
@@ -119,6 +120,37 @@ const fontFor = (theme: Theme) =>
   theme === "sketch" ? FONT_FAMILY.Excalifont : FONT_FAMILY.Nunito;
 
 const roughnessFor = (theme: Theme) => (theme === "sketch" ? 1 : 0);
+
+/** an outline shape's lines drawn in the node's border */
+const withBorder = (item: Item, border: Border | undefined): Item =>
+  !border ||
+  border === "none" ||
+  item.kind === "text" ||
+  item.kind === "frame" ||
+  item.kind === "image"
+    ? item
+    : border === "bold"
+    ? { ...item, strokeWidth: (item.strokeWidth ?? 2) * 2 }
+    : item.kind === "freedraw"
+    ? item
+    : { ...item, line: border };
+
+/** a node's or group's outline as Excalidraw stroke properties */
+const borderProps = (
+  border: Border | undefined,
+  base: number,
+): {
+  strokeStyle?: "solid" | "dashed" | "dotted";
+  strokeWidth?: number;
+  strokeColor?: string;
+} | null =>
+  !border
+    ? null
+    : border === "bold"
+    ? { strokeStyle: "solid", strokeWidth: base * 2 }
+    : border === "none"
+    ? { strokeColor: "transparent" }
+    : { strokeStyle: border };
 
 const colorFor = (name: string | undefined) => {
   if (!name) {
@@ -427,7 +459,7 @@ export const buildElements = (
         // anchor, not its left edge
         const width =
           item.align === "center" || item.align === "right"
-            ? measureText_(item.text, theme, item.size).width
+            ? item.w ?? measureText_(item.text, theme, item.size).width
             : 0;
         return {
           type: "text",
@@ -436,12 +468,13 @@ export const buildElements = (
           y: oy + item.y,
           text: item.text,
           fontSize: item.size,
-          fontFamily,
+          fontFamily: item.font ?? fontFamily,
           textAlign: item.align ?? "left",
           strokeColor: item.color,
           opacity: item.opacity ?? 100,
+          angle: item.angle ?? 0,
           groupIds,
-        } as ExcalidrawElementSkeleton;
+        } as unknown as ExcalidrawElementSkeleton;
       }
       case "line":
       case "arrow": {
@@ -460,14 +493,14 @@ export const buildElements = (
           strokeColor: item.stroke,
           strokeStyle: item.line ?? "solid",
           strokeWidth: item.strokeWidth ?? 2,
-          roughness: rough,
-          roundness: null,
+          roughness: item.roughness ?? rough,
+          roundness: item.curved ? { type: 2 } : null,
           opacity: item.opacity ?? 100,
           ...(item.closed
             ? {
                 polygon: true,
                 backgroundColor: item.fill ?? "transparent",
-                fillStyle: "solid",
+                fillStyle: item.fillStyle ?? "solid",
               }
             : null),
           ...(item.kind === "arrow"
@@ -529,9 +562,16 @@ export const buildElements = (
           fillStyle: item.fillStyle ?? "solid",
           strokeStyle: item.line ?? "solid",
           strokeWidth: item.strokeWidth ?? 2,
-          roughness: rough,
+          roughness: item.roughness ?? rough,
           opacity: item.opacity ?? 100,
-          roundness: item.rounded && item.kind === "rect" ? { type: 3 } : null,
+          angle: item.angle ?? 0,
+          roundness: !item.rounded
+            ? null
+            : item.kind === "rect"
+            ? { type: 3 }
+            : item.kind === "diamond"
+            ? { type: 2 }
+            : null,
           groupIds,
           ...(item.label
             ? {
@@ -547,7 +587,7 @@ export const buildElements = (
                 },
               }
             : null),
-        } as ExcalidrawElementSkeleton;
+        } as unknown as ExcalidrawElementSkeleton;
     }
   };
 
@@ -638,6 +678,7 @@ export const buildElements = (
         opacity: 100,
         roundness: { type: 3 },
         groupIds: [`gx-gg-${group.id}`],
+        ...borderProps(group.border, 1),
         ...styleProps(group.style),
       } as ExcalidrawElementSkeleton,
       {
@@ -648,6 +689,7 @@ export const buildElements = (
         color: group.color,
         layout: group.layout,
         columns: group.columns,
+        border: group.border,
         pinned: group.pinned || undefined,
         laid: [group.x!, group.y!],
         meta,
@@ -688,6 +730,7 @@ export const buildElements = (
       color: node.color,
       fields: node.fields,
       size: node.size,
+      border: node.border,
       pinned: node.pinned || undefined,
       laid: [node.x!, node.y!],
       meta,
@@ -712,6 +755,7 @@ export const buildElements = (
           roughness,
           roundness: { type: 3 },
           groupIds: together,
+          ...borderProps(node.border, 2),
           ...styleProps(node.style),
           link: node.link ?? null,
         } as ExcalidrawElementSkeleton,
@@ -789,8 +833,8 @@ export const buildElements = (
         shape,
         node.width!,
         node.height!,
-        color,
-      )) {
+        node.border === "none" ? { ...color, stroke: "transparent" } : color,
+      ).map((item) => withBorder(item, node.border))) {
         const partId = elementId.nodePart(node.id, `s-${item.key}`);
         const skeleton = itemSkeleton(item, partId, node.x!, node.y!, together);
         if (skeleton) {
@@ -847,6 +891,7 @@ export const buildElements = (
         roughness,
         roundness: shape === "rect" ? { type: 3 } : null,
         ...(sticky ? { baseHeight: node.height! } : null),
+        ...(text ? null : borderProps(node.border, 2)),
         ...(text ? null : styleProps(node.style)),
         link: node.link ?? null,
         label: {

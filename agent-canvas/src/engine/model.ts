@@ -24,6 +24,8 @@ export type LineStyle = "solid" | "dashed" | "dotted";
 /** how a container (the whole drawing, or one group) arranges its members */
 export type Layout = "layered" | "tree" | "radial" | "grid" | "lanes";
 export type TextSize = "s" | "m" | "l" | "xl";
+/** a box's outline: dashed for an optional or external thing, bold for an end event */
+export type Border = "solid" | "dashed" | "dotted" | "bold" | "none";
 /** an arrow end: Excalidraw's own arrowheads, or none */
 export type Head =
   | "none"
@@ -52,7 +54,10 @@ export type BlockType =
   | "radar"
   | "legend"
   | "journey"
-  | "image";
+  | "image"
+  | "chart"
+  | "wardley"
+  | "library";
 
 export type Style = {
   strokeColor?: string;
@@ -77,6 +82,7 @@ export type NodeModel = {
   /** a URL or a reference the node opens */
   link?: string;
   size?: TextSize;
+  border?: Border;
   x?: number;
   y?: number;
   width?: number;
@@ -112,6 +118,7 @@ export type GroupModel = {
   slide?: boolean;
   layout?: Layout;
   columns?: number;
+  border?: Border;
   x?: number;
   y?: number;
   width?: number;
@@ -180,6 +187,7 @@ export type GxData =
       color?: string;
       fields?: string[][];
       size?: TextSize;
+      border?: Border;
       pinned?: boolean;
       laid?: [number, number];
       meta?: Meta;
@@ -203,6 +211,7 @@ export type GxData =
       slide?: boolean;
       layout?: Layout;
       columns?: number;
+      border?: Border;
       pinned?: boolean;
       laid?: [number, number];
       meta?: Meta;
@@ -421,6 +430,7 @@ export const readModel = (elements: readonly ExcalidrawElement[]): Model => {
           color: gx.color,
           fields: gx.fields ? cardFields(gx.id, gx.fields, byId) : undefined,
           size: gx.size,
+          border: gx.border,
           link: element.link ?? undefined,
           x: element.x,
           y: element.y,
@@ -464,6 +474,7 @@ export const readModel = (elements: readonly ExcalidrawElement[]): Model => {
           slide: gx.slide,
           layout: gx.layout,
           columns: gx.columns,
+          border: gx.border,
           x: element.x,
           y: element.y,
           width: element.width,

@@ -38,6 +38,10 @@ export type ShapeItem = Base & {
   rounded?: boolean;
   opacity?: number;
   label?: { text: string; size: number; color?: string; align?: Align };
+  /** radians, about the centre (a library item's own rotation) */
+  angle?: number;
+  /** overrides the drawing's line style for this item */
+  roughness?: number;
 };
 export type Align = "left" | "center" | "right";
 export type TextItem = Base & {
@@ -49,6 +53,11 @@ export type TextItem = Base & {
   color: string;
   align?: Align;
   opacity?: number;
+  angle?: number;
+  /** an Excalidraw font family, else the theme's */
+  font?: number;
+  /** the box the text is aligned in, when known (else it is measured) */
+  w?: number;
 };
 export type LineItem = Base & {
   kind: "line" | "arrow";
@@ -57,11 +66,15 @@ export type LineItem = Base & {
   /** a closed line filled with `fill`: any polygon */
   closed?: boolean;
   fill?: string;
+  fillStyle?: "solid" | "hachure" | "cross-hatch";
   opacity?: number;
   line?: LineStyle;
   strokeWidth?: number;
   head?: Head;
   tail?: Head;
+  roughness?: number;
+  /** rounded corners (a curved line) */
+  curved?: boolean;
 };
 export type FrameItem = Base & {
   kind: "frame";
@@ -2093,6 +2106,10 @@ const WIDGETS = [
   "hero",
   "section",
   "footer",
+  // dashboards
+  "chart",
+  "stat",
+  "map",
   // game UI
   "slots",
   "minimap",
@@ -2156,6 +2173,19 @@ const widgetsOf = (v: unknown, where: string, depth = 0): Widget[] => {
     num(raw.columns, `${at}.columns`, 1, 8);
     num(raw.level, `${at}.level`, 1, 3);
     num(raw.count, `${at}.count`, 1, 40);
+    oneOf(raw.chart, `${at}.chart`, [
+      "bar",
+      "line",
+      "area",
+      "pie",
+      "donut",
+    ] as const);
+    if (raw.values !== undefined) {
+      list(raw.values, `${at}.values`, 24).forEach((n, j) =>
+        num(n, `${at}.values[${j}]`, 0, BIG),
+      );
+    }
+    str(raw.delta, `${at}.delta`);
     return raw as Widget;
   });
 };
@@ -3134,6 +3164,251 @@ const drawWidget = (
         },
       );
       return { items, height: cy - y + 12 };
+    }
+    case "chart": {
+      const h = w.height === "l" ? 260 : w.height === "s" ? 120 : 180;
+      items.push({
+        kind: "rect",
+        key,
+        x,
+        y,
+        w: width,
+        h,
+        stroke: LINE,
+        fill: "#ffffff",
+        strokeWidth: 1,
+        rounded: true,
+      });
+      let top = y + 12;
+      if (label) {
+        top += textAt(label, x + 14, y + 12, 14, LINE, "l", width - 28) + 8;
+      }
+      const ink = lofi ? "#adb5bd" : primary.stroke;
+      const raw = (w.values as number[] | undefined) ?? [
+        0.45, 0.7, 0.55, 0.9, 0.65, 0.8,
+      ];
+      const peak = Math.max(...raw, 1e-9);
+      const values = raw.map((v) => v / peak);
+      const px = x + 16;
+      const pw = width - 32;
+      const ph = y + h - 14 - top;
+      const kind = (w.chart as string | undefined) ?? "bar";
+      if (kind === "pie" || kind === "donut") {
+        const r = Math.min(ph, pw) / 2;
+        const cx = px + pw / 2;
+        const cy = top + ph / 2;
+        const total = raw.reduce((a, b) => a + b, 0) || 1;
+        let a = -Math.PI / 2;
+        raw.forEach((v, k) => {
+          const sweep = (v / total) * Math.PI * 2;
+          const outer = arc(cx, cy, r, a, a + sweep);
+          const pts: [number, number][] =
+            kind === "donut"
+              ? [...outer, ...arc(cx, cy, r * 0.55, a, a + sweep).reverse()]
+              : [[cx, cy], ...outer];
+          const tone = lofi
+            ? ["#ced4da", "#adb5bd", "#dee2e6", "#868e96"][k % 4]
+            : ctx.paint(SERIES_COLORS[k % SERIES_COLORS.length], "blue").stroke;
+          items.push({
+            kind: "line",
+            key: `${key}-s${k}`,
+            points: [...pts, pts[0]],
+            stroke: "#ffffff",
+            strokeWidth: 1,
+            closed: true,
+            fill: tone,
+          });
+          a += sweep;
+        });
+      } else {
+        const step = pw / values.length;
+        if (kind === "bar") {
+          values.forEach((v, k) =>
+            items.push({
+              kind: "rect",
+              key: `${key}-b${k}`,
+              x: px + step * k + step * 0.18,
+              y: top + ph * (1 - v),
+              w: step * 0.64,
+              h: ph * v,
+              stroke: ink,
+              fill: ink,
+              strokeWidth: 1,
+            }),
+          );
+        } else {
+          const pts = values.map(
+            (v, k) =>
+              [px + step * k + step / 2, top + ph * (1 - v)] as [
+                number,
+                number,
+              ],
+          );
+          if (kind === "area") {
+            items.push({
+              kind: "line",
+              key: `${key}-a`,
+              points: [
+                ...pts,
+                [pts[pts.length - 1][0], top + ph],
+                [pts[0][0], top + ph],
+                pts[0],
+              ],
+              stroke: "transparent",
+              closed: true,
+              fill: ink,
+              opacity: 25,
+            });
+          }
+          items.push({
+            kind: "line",
+            key: `${key}-ln`,
+            points: pts,
+            stroke: ink,
+            strokeWidth: 2.5,
+          });
+        }
+        items.push({
+          kind: "line",
+          key: `${key}-x`,
+          points: [
+            [px, top + ph],
+            [px + pw, top + ph],
+          ],
+          stroke: RULE,
+          strokeWidth: 1,
+        });
+      }
+      return { items, height: h };
+    }
+    case "stat": {
+      const h = 96;
+      items.push({
+        kind: "rect",
+        key,
+        x,
+        y,
+        w: width,
+        h,
+        stroke: LINE,
+        fill: "#ffffff",
+        strokeWidth: 1,
+        rounded: true,
+      });
+      textAt(label || "Metric", x + 14, y + 12, 14, LINE, "l", width - 28);
+      if (lofi && !w.real) {
+        placeholder(1, x + 14, y + 44, Math.min(120, width - 28), "v");
+      } else {
+        textAt(text || "—", x + 14, y + 36, 28, INK, "v", width - 28);
+      }
+      const delta = w.delta as string | undefined;
+      if (delta) {
+        const tone = lofi
+          ? LINE
+          : delta.trim().startsWith("-") || delta.trim().startsWith("−")
+          ? "#e03131"
+          : "#2f9e44";
+        textAt(delta, x + 14, y + 72, 13, tone, "d", width - 28);
+      }
+      return { items, height: h };
+    }
+    case "map": {
+      const h = w.height === "l" ? 320 : w.height === "s" ? 140 : 220;
+      items.push({
+        kind: "rect",
+        key,
+        x,
+        y,
+        w: width,
+        h,
+        stroke: LINE,
+        fill: lofi ? FILL : "#e6f4ea",
+        strokeWidth: 1,
+      });
+      // roads across the block, a river, and pins
+      const roads: [number, number][][] = [
+        [
+          [x, y + h * 0.35],
+          [x + width, y + h * 0.5],
+        ],
+        [
+          [x + width * 0.3, y],
+          [x + width * 0.4, y + h],
+        ],
+        [
+          [x + width * 0.75, y],
+          [x + width * 0.65, y + h],
+        ],
+      ];
+      roads.forEach((points, k) =>
+        items.push({
+          kind: "line",
+          key: `${key}-r${k}`,
+          points,
+          stroke: "#ffffff",
+          strokeWidth: 6,
+        }),
+      );
+      items.push({
+        kind: "freedraw",
+        key: `${key}-river`,
+        points: [
+          [x + 10, y + h * 0.8],
+          [x + width * 0.25, y + h * 0.7],
+          [x + width * 0.5, y + h * 0.85],
+          [x + width - 10, y + h * 0.75],
+        ],
+        stroke: lofi ? "#ced4da" : "#a5d8ff",
+        strokeWidth: 5,
+      });
+      const pins = Math.max(
+        1,
+        Math.min(6, (w.count as number | undefined) ?? 3),
+      );
+      for (let k = 0; k < pins; k++) {
+        const pxk = x + width * (0.2 + ((k * 0.27) % 0.65));
+        const pyk = y + h * (0.25 + ((k * 0.31) % 0.45));
+        items.push(
+          {
+            kind: "ellipse",
+            key: `${key}-p${k}`,
+            x: pxk - 9,
+            y: pyk - 22,
+            w: 18,
+            h: 18,
+            stroke: lofi ? LINE : "#e03131",
+            fill: lofi ? "#adb5bd" : "#e03131",
+            strokeWidth: 1,
+          },
+          {
+            kind: "line",
+            key: `${key}-q${k}`,
+            points: [
+              [pxk, pyk - 4],
+              [pxk, pyk + 4],
+            ],
+            stroke: lofi ? LINE : "#e03131",
+            strokeWidth: 3,
+          },
+        );
+      }
+      if (label) {
+        const m = ctx.measure(label, 14);
+        items.push({
+          kind: "rect",
+          key: `${key}-lb`,
+          x: x + 10,
+          y: y + 10,
+          w: m.width + 16,
+          h: m.height + 8,
+          stroke: LINE,
+          fill: "#ffffff",
+          strokeWidth: 1,
+          rounded: true,
+          label: { text: label, size: 14, color: INK },
+        });
+      }
+      return { items, height: h };
     }
     case "divider":
       items.push({
@@ -4474,6 +4749,1915 @@ const drawImage = (
   return { width, height, items: [box(width, height), ...items] };
 };
 
+// ------------------------------------------------------------------ chart
+
+// a data chart: bars, lines, areas, pies, donuts, a funnel, points on two
+// numeric axes (a scatter plot, a function's graph, a supply-and-demand curve)
+
+const CHART_TYPES = [
+  "bar",
+  "line",
+  "area",
+  "pie",
+  "donut",
+  "funnel",
+  "scatter",
+] as const;
+type ChartType = typeof CHART_TYPES[number];
+
+const BIG = 1e12;
+
+const validateChart = (spec: Record<string, unknown>) => {
+  const type = oneOf(spec.type, "type", CHART_TYPES);
+  if (!type) {
+    refuse(`a chart needs \`type\`: ${CHART_TYPES.join(", ")}`);
+  }
+  for (const key of ["title", "xLabel", "yLabel", "unit", "center"]) {
+    str(spec[key], key);
+  }
+  for (const key of [
+    "stacked",
+    "horizontal",
+    "values",
+    "grid",
+    "origin",
+    "legend",
+  ]) {
+    flag(spec[key], key);
+  }
+  num(spec.width, "width", 160, 1400);
+  num(spec.height, "height", 100, 900);
+  for (const key of ["min", "max", "xMin", "xMax"]) {
+    num(spec[key], key, -BIG, BIG);
+  }
+  if (type === "pie" || type === "donut" || type === "funnel") {
+    const slices = list(spec.slices, "slices", 24);
+    if (!slices.length) {
+      refuse(`a ${type} chart needs \`slices\`: [{label, value, color}]`);
+    }
+    let total = 0;
+    slices.forEach((raw, k) => {
+      if (!isObject(raw)) {
+        refuse(`slices[${k}] must be {label, value, color}`);
+      }
+      const s = raw as Record<string, unknown>;
+      str(s.label, `slices[${k}].label`, true);
+      str(s.color, `slices[${k}].color`);
+      const v = num(s.value, `slices[${k}].value`, 0, BIG);
+      if (v === undefined) {
+        refuse(`slices[${k}].value is a number of at least 0`);
+      }
+      total += v!;
+    });
+    if (total <= 0) {
+      refuse("the slices' values add up to 0");
+    }
+    return;
+  }
+  const series = list(spec.series, "series", 12);
+  if (!series.length) {
+    refuse(
+      type === "scatter"
+        ? "a scatter chart needs `series`: [{label, points: [[x, y], ...]}]"
+        : "a chart needs `series`: [{label, values}] and `categories`",
+    );
+  }
+  if (type === "scatter") {
+    series.forEach((raw, k) => {
+      if (!isObject(raw)) {
+        refuse(`series[${k}] must be {label, points, color, line}`);
+      }
+      const s = raw as Record<string, unknown>;
+      str(s.label, `series[${k}].label`);
+      str(s.color, `series[${k}].color`);
+      flag(s.line, `series[${k}].line`);
+      flag(s.dots, `series[${k}].dots`);
+      const pts = list(s.points, `series[${k}].points`, 500);
+      if (!pts.length) {
+        refuse(`series[${k}].points is empty`);
+      }
+      pts.forEach((p, j) => pointOf(p, `series[${k}].points[${j}]`));
+    });
+  } else {
+    const categories = list(spec.categories, "categories", 60);
+    if (!categories.length) {
+      refuse("a chart needs `categories`: the labels along the axis");
+    }
+    categories.forEach((c, k) => str(c, `categories[${k}]`, true));
+    series.forEach((raw, k) => {
+      if (!isObject(raw)) {
+        refuse(`series[${k}] must be {label, values, color}`);
+      }
+      const s = raw as Record<string, unknown>;
+      str(s.label, `series[${k}].label`);
+      str(s.color, `series[${k}].color`);
+      oneOf(s.type, `series[${k}].type`, ["bar", "line", "area"] as const);
+      const values = list(s.values, `series[${k}].values`, 60);
+      if (values.length !== categories.length) {
+        refuse(
+          `series[${k}].values has ${values.length} values for ${categories.length} categories`,
+        );
+      }
+      values.forEach((v, j) => {
+        if (num(v, `series[${k}].values[${j}]`, -BIG, BIG) === undefined) {
+          refuse(`series[${k}].values[${j}] must be a number`);
+        }
+      });
+    });
+  }
+  list(spec.lines ?? [], "lines", 6).forEach((raw, k) => {
+    if (!isObject(raw)) {
+      refuse(`lines[${k}] must be {value, label, color}`);
+    }
+    const l = raw as Record<string, unknown>;
+    if (num(l.value, `lines[${k}].value`, -BIG, BIG) === undefined) {
+      refuse(`lines[${k}].value must be a number`);
+    }
+    str(l.label, `lines[${k}].label`);
+    str(l.color, `lines[${k}].color`);
+  });
+};
+
+type ChartPoint = { x: number; y: number; label?: string; size?: string };
+
+const pointOf = (p: unknown, where: string): ChartPoint => {
+  if (
+    Array.isArray(p) &&
+    p.length === 2 &&
+    p.every((n) => typeof n === "number" && Number.isFinite(n))
+  ) {
+    return { x: p[0], y: p[1] };
+  }
+  if (isObject(p)) {
+    const x = num(p.x, `${where}.x`, -BIG, BIG);
+    const y = num(p.y, `${where}.y`, -BIG, BIG);
+    if (x === undefined || y === undefined) {
+      return refuse(`${where} needs x and y`);
+    }
+    return {
+      x,
+      y,
+      label: str(p.label, `${where}.label`),
+      size: oneOf(p.size, `${where}.size`, ["s", "m", "l"] as const),
+    };
+  }
+  return refuse(`${where} must be [x, y] or {x, y, label, size}`);
+};
+
+/** Round tick steps (1, 2, 2.5, 5 x 10^n) covering lo..hi. */
+export const niceTicks = (lo: number, hi: number, count = 5) => {
+  if (hi - lo < 1e-9) {
+    hi = lo === 0 ? 1 : lo + Math.abs(lo) * 0.5;
+    lo = lo === 0 ? 0 : Math.min(lo, 0);
+  }
+  const raw = (hi - lo) / count;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw)!;
+  const start = Math.floor(lo / step + 1e-9) * step;
+  const end = Math.ceil(hi / step - 1e-9) * step;
+  const ticks: number[] = [];
+  for (let v = start; v <= end + step * 1e-6; v += step) {
+    ticks.push(Number(v.toFixed(10)));
+  }
+  return { ticks, lo: start, hi: end };
+};
+
+const fmtNumber = (v: number, unit?: string) => {
+  const text = Number.isInteger(v)
+    ? v.toLocaleString("en-US")
+    : Number(v.toFixed(Math.abs(v) < 1 ? 3 : 2)).toLocaleString("en-US");
+  return unit ? `${text}${unit}` : text;
+};
+
+const seriesPaint = (ctx: DrawContext, color: unknown, k: number): Paint =>
+  ctx.paint(
+    (color as string | undefined) ?? SERIES_COLORS[k % SERIES_COLORS.length],
+    "blue",
+  );
+
+const GRID = "#e9ecef";
+const TICK = 13;
+
+/** A row of colour swatches and names, from x0 up to `maxWidth`. */
+const legendRow = (
+  entries: { label: string; paint: Paint }[],
+  x0: number,
+  y0: number,
+  maxWidth: number,
+  ctx: DrawContext,
+): { items: Item[]; height: number; width: number } => {
+  const items: Item[] = [];
+  let x = x0;
+  let y = y0;
+  let width = 0;
+  entries.forEach(({ label, paint }, k) => {
+    const m = ctx.measure(label, 14);
+    if (x > x0 && x + m.width + 24 > x0 + maxWidth) {
+      x = x0;
+      y += 24;
+    }
+    items.push(
+      {
+        kind: "rect",
+        key: `lg${k}`,
+        x,
+        y: y + 2,
+        w: 14,
+        h: 14,
+        stroke: paint.stroke,
+        fill: paint.stroke,
+        strokeWidth: 1,
+      },
+      {
+        kind: "text",
+        key: `lg${k}-t`,
+        x: x + 20,
+        y,
+        text: label,
+        size: 14,
+        color: INK,
+      },
+    );
+    width = Math.max(width, x + 20 + m.width - x0);
+    x += m.width + 44;
+  });
+  return { items, height: entries.length ? y - y0 + 24 : 0, width };
+};
+
+/** The y axis' name, turned to read upwards, centred on [top, top + h]. */
+const yAxisName = (
+  text: string | undefined,
+  top: number,
+  h: number,
+  ctx: DrawContext,
+): { items: Item[]; width: number } => {
+  if (!text) {
+    return { items: [], width: 0 };
+  }
+  const m = ctx.measure(text, 14);
+  // a text turns about its centre: the centre goes where the name belongs
+  const cx = m.height / 2 + 2;
+  return {
+    items: [
+      {
+        kind: "text",
+        key: "yname",
+        x: cx - m.width / 2,
+        y: top + h / 2 - m.height / 2,
+        text,
+        size: 14,
+        color: MUTED,
+        angle: -Math.PI / 2,
+      },
+    ],
+    width: m.height + 10,
+  };
+};
+
+const drawChart = (
+  spec: Record<string, unknown>,
+  ctx: DrawContext,
+): Drawing => {
+  const type = spec.type as ChartType;
+  if (type === "pie" || type === "donut") {
+    return drawPie(spec, ctx);
+  }
+  if (type === "funnel") {
+    return drawFunnel(spec, ctx);
+  }
+  if (type === "scatter") {
+    return drawScatter(spec, ctx);
+  }
+  return spec.horizontal && type === "bar"
+    ? drawBarsAcross(spec, ctx)
+    : drawCategoryChart(spec, ctx);
+};
+
+type ChartSeries = {
+  label?: string;
+  values: number[];
+  color?: string;
+  /** a line over bars: a combination chart */
+  type?: "bar" | "line" | "area";
+};
+
+/** The value range a category chart shows: zero, every value (stacked sums), every reference line. */
+const valueRange = (spec: Record<string, unknown>) => {
+  const series = spec.series as ChartSeries[];
+  const n = (spec.categories as string[]).length;
+  const stacked = !!spec.stacked && spec.type !== "line";
+  const values: number[] = [0];
+  if (stacked) {
+    const lines = series.filter(
+      (s) => (s.type ?? (spec.type as string)) === "line",
+    );
+    lines.forEach((s) => values.push(...s.values));
+    for (let j = 0; j < n; j++) {
+      let up = 0;
+      let down = 0;
+      for (const s of series.filter((s) => !lines.includes(s))) {
+        if (s.values[j] >= 0) {
+          up += s.values[j];
+        } else {
+          down += s.values[j];
+        }
+      }
+      values.push(up, down);
+    }
+  } else {
+    series.forEach((s) => values.push(...s.values));
+  }
+  (spec.lines as { value: number }[] | undefined)?.forEach((l) =>
+    values.push(l.value),
+  );
+  const lo = (spec.min as number | undefined) ?? Math.min(...values);
+  const hi = (spec.max as number | undefined) ?? Math.max(...values);
+  return niceTicks(lo, hi);
+};
+
+const drawCategoryChart = (
+  spec: Record<string, unknown>,
+  ctx: DrawContext,
+): Drawing => {
+  const type = spec.type as "bar" | "line" | "area";
+  const categories = spec.categories as string[];
+  const series = spec.series as ChartSeries[];
+  const unit = spec.unit as string | undefined;
+  const stacked = !!spec.stacked && type !== "line";
+  const showValues = (spec.values as boolean | undefined) ?? type === "bar";
+  const W = (spec.width as number | undefined) ?? 560;
+  const H = (spec.height as number | undefined) ?? 300;
+  const title = titleItems(spec.title as string | undefined, ctx);
+  const range = valueRange(spec);
+  const items: Item[] = [...title.items];
+  const top = title.height + (showValues ? 22 : 10);
+  const yName = yAxisName(spec.yLabel as string | undefined, top, H, ctx);
+  items.push(...yName.items);
+  const tickW = Math.max(
+    ...range.ticks.map((t) => ctx.measure(fmtNumber(t, unit), TICK).width),
+  );
+  const left = yName.width + tickW + 10;
+  const yOf = (v: number) =>
+    top + H - ((v - range.lo) / (range.hi - range.lo)) * H;
+  range.ticks.forEach((t, k) => {
+    if (spec.grid !== false) {
+      items.push({
+        kind: "line",
+        key: `grid${k}`,
+        points: [
+          [left, yOf(t)],
+          [left + W, yOf(t)],
+        ],
+        stroke: GRID,
+        strokeWidth: 1,
+      });
+    }
+    const label = fmtNumber(t, unit);
+    const m = ctx.measure(label, TICK);
+    items.push({
+      kind: "text",
+      key: `tick${k}`,
+      x: left - 8 - m.width,
+      y: yOf(t) - m.height / 2,
+      text: label,
+      size: TICK,
+      color: MUTED,
+    });
+  });
+  const base = yOf(Math.min(Math.max(0, range.lo), range.hi));
+  const slot = W / categories.length;
+  // category names under their slots
+  let labelsH = 0;
+  categories.forEach((c, j) => {
+    const text = wrap(c, Math.max(24, slot - 6), 14, ctx.measure);
+    const m = ctx.measure(text, 14);
+    labelsH = Math.max(labelsH, m.height);
+    items.push({
+      kind: "text",
+      key: `cat${j}`,
+      x: left + slot * j + (slot - m.width) / 2,
+      y: top + H + 8,
+      text,
+      size: 14,
+      color: INK,
+      align: "center",
+      w: m.width,
+    });
+  });
+  const paints = series.map((s, k) => seriesPaint(ctx, s.color, k));
+  const kindOf = (s: ChartSeries) => s.type ?? type;
+  const bars = series.filter((s) => kindOf(s) === "bar");
+  if (bars.length) {
+    const group = slot * 0.72;
+    const barW = stacked ? group : group / bars.length;
+    for (let j = 0; j < categories.length; j++) {
+      let up = 0;
+      let down = 0;
+      bars.forEach((s, b) => {
+        const k = series.indexOf(s);
+        const v = s.values[j];
+        let y0: number;
+        let y1: number;
+        let x: number;
+        if (stacked) {
+          const from = v >= 0 ? up : down;
+          const to = from + v;
+          if (v >= 0) {
+            up = to;
+          } else {
+            down = to;
+          }
+          y0 = yOf(from);
+          y1 = yOf(to);
+          x = left + slot * j + (slot - group) / 2;
+        } else {
+          y0 = base;
+          y1 = yOf(v);
+          x = left + slot * j + (slot - group) / 2 + barW * b;
+        }
+        const y = Math.min(y0, y1);
+        const h = Math.abs(y1 - y0);
+        if (h > 0.5) {
+          items.push({
+            kind: "rect",
+            key: `bar${k}-${j}`,
+            x,
+            y,
+            w: Math.max(2, barW - (stacked ? 0 : 2)),
+            h,
+            stroke: paints[k].stroke,
+            fill: paints[k].stroke,
+            strokeWidth: 1,
+          });
+        }
+        if (showValues) {
+          const label = fmtNumber(v, unit);
+          const m = ctx.measure(label, 12);
+          if (stacked) {
+            if (h >= m.height + 2 && barW >= m.width + 4) {
+              items.push({
+                kind: "text",
+                key: `val${k}-${j}`,
+                x: x + (barW - m.width) / 2,
+                y: y + (h - m.height) / 2,
+                text: label,
+                size: 12,
+                color: "#ffffff",
+              });
+            }
+          } else {
+            items.push({
+              kind: "text",
+              key: `val${k}-${j}`,
+              x: x + (barW - m.width) / 2,
+              y: v >= 0 ? y - m.height - 2 : y + h + 2,
+              text: label,
+              size: 12,
+              color: INK,
+            });
+          }
+        }
+      });
+      if (stacked && showValues && bars.length > 1) {
+        const label = fmtNumber(up + down, unit);
+        const m = ctx.measure(label, 12);
+        items.push({
+          kind: "text",
+          key: `sum${j}`,
+          x: left + slot * j + (slot - m.width) / 2,
+          y: yOf(up) - m.height - 2,
+          text: label,
+          size: 12,
+          color: INK,
+        });
+      }
+    }
+  }
+  {
+    const xs = categories.map((_, j) => left + slot * j + slot / 2);
+    let below = categories.map(() => 0);
+    series.forEach((s, k) => {
+      if (kindOf(s) === "bar") {
+        return;
+      }
+      const lineValues = showValues && !bars.length;
+      const stackThis = stacked && kindOf(s) === "area";
+      const tops = s.values.map((v, j) => (stackThis ? below[j] + v : v));
+      const pts = tops.map((v, j) => [xs[j], yOf(v)] as [number, number]);
+      if (kindOf(s) === "area") {
+        const floor = stackThis
+          ? below.map((v, j) => [xs[j], yOf(v)] as [number, number]).reverse()
+          : [
+              [xs[xs.length - 1], base] as [number, number],
+              [xs[0], base] as [number, number],
+            ];
+        items.push({
+          kind: "line",
+          key: `area${k}`,
+          points: [...pts, ...floor, pts[0]],
+          stroke: "transparent",
+          closed: true,
+          fill: paints[k].stroke,
+          opacity: stackThis ? 45 : 22,
+        });
+      }
+      if (pts.length > 1) {
+        items.push({
+          kind: "line",
+          key: `line${k}`,
+          points: pts,
+          stroke: paints[k].stroke,
+          strokeWidth: 2.5,
+        });
+      }
+      pts.forEach(([x, y], j) => {
+        items.push({
+          kind: "ellipse",
+          key: `dot${k}-${j}`,
+          x: x - 4,
+          y: y - 4,
+          w: 8,
+          h: 8,
+          stroke: paints[k].stroke,
+          fill: "#ffffff",
+          strokeWidth: 2,
+        });
+        if (lineValues) {
+          const label = fmtNumber(s.values[j], unit);
+          const m = ctx.measure(label, 12);
+          items.push({
+            kind: "text",
+            key: `val${k}-${j}`,
+            x: x - m.width / 2,
+            y: y - m.height - 6,
+            text: label,
+            size: 12,
+            color: paints[k].stroke,
+          });
+        }
+      });
+      if (stackThis) {
+        below = tops;
+      }
+    });
+  }
+  // the axes over the bars
+  items.push(
+    {
+      kind: "line",
+      key: "axis-x",
+      points: [
+        [left, base],
+        [left + W, base],
+      ],
+      stroke: INK,
+      strokeWidth: 1.5,
+    },
+    {
+      kind: "line",
+      key: "axis-y",
+      points: [
+        [left, top],
+        [left, top + H],
+      ],
+      stroke: INK,
+      strokeWidth: 1.5,
+    },
+  );
+  referenceLines(spec, items, left, W, yOf, ctx);
+  let height = top + H + 8 + labelsH;
+  if (spec.xLabel) {
+    const m = ctx.measure(spec.xLabel as string, 14);
+    items.push({
+      kind: "text",
+      key: "xname",
+      x: left + (W - m.width) / 2,
+      y: height + 8,
+      text: spec.xLabel as string,
+      size: 14,
+      color: MUTED,
+    });
+    height += 8 + m.height;
+  }
+  let width = Math.max(left + W, title.width);
+  const named = series.flatMap((s, k) =>
+    s.label ? [{ label: s.label, paint: paints[k] }] : [],
+  );
+  if (named.length > 1 || (spec.legend && named.length)) {
+    const legend = legendRow(named, left, height + 16, W, ctx);
+    items.push(...legend.items);
+    height += 16 + legend.height;
+    width = Math.max(width, left + legend.width);
+  }
+  return {
+    width,
+    height: height + 4,
+    items: [box(width, height + 4), ...items],
+  };
+};
+
+/** Dashed lines across the plot at a target, a budget, an average. */
+const referenceLines = (
+  spec: Record<string, unknown>,
+  items: Item[],
+  left: number,
+  W: number,
+  yOf: (v: number) => number,
+  ctx: DrawContext,
+) => {
+  (spec.lines as Record<string, unknown>[] | undefined)?.forEach((l, k) => {
+    const paint = ctx.paint(l.color as string | undefined, "red");
+    const y = yOf(l.value as number);
+    items.push({
+      kind: "line",
+      key: `ref${k}`,
+      points: [
+        [left, y],
+        [left + W, y],
+      ],
+      stroke: paint.stroke,
+      strokeWidth: 1.5,
+      line: "dashed",
+    });
+    if (l.label) {
+      const m = ctx.measure(l.label as string, 13);
+      items.push({
+        kind: "text",
+        key: `ref${k}-t`,
+        x: left + W - m.width,
+        y: y - m.height - 2,
+        text: l.label as string,
+        size: 13,
+        color: paint.stroke,
+      });
+    }
+  });
+};
+
+/** Horizontal bars: category names down the left, values along the bottom. */
+const drawBarsAcross = (
+  spec: Record<string, unknown>,
+  ctx: DrawContext,
+): Drawing => {
+  const categories = spec.categories as string[];
+  const series = spec.series as ChartSeries[];
+  const unit = spec.unit as string | undefined;
+  const stacked = !!spec.stacked;
+  const showValues = (spec.values as boolean | undefined) ?? true;
+  const W = (spec.width as number | undefined) ?? 520;
+  const title = titleItems(spec.title as string | undefined, ctx);
+  const range = valueRange(spec);
+  const items: Item[] = [...title.items];
+  const names = categories.map((c) => wrap(c, 180, 14, ctx.measure));
+  const nameW = Math.max(...names.map((t) => ctx.measure(t, 14).width));
+  const left = nameW + 12;
+  const top =
+    title.height +
+    6 +
+    ((spec.lines as { label?: string }[] | undefined)?.some((l) => l.label)
+      ? 22
+      : 0);
+  const per = stacked ? 1 : series.length;
+  const slot = Math.max(30, per * 20 + 12);
+  const H = slot * categories.length;
+  const valueRoom = showValues ? 48 : 0;
+  const plotW = W - valueRoom;
+  const xOf = (v: number) =>
+    left + ((v - range.lo) / (range.hi - range.lo)) * plotW;
+  const base = xOf(Math.min(Math.max(0, range.lo), range.hi));
+  range.ticks.forEach((t, k) => {
+    if (spec.grid !== false) {
+      items.push({
+        kind: "line",
+        key: `grid${k}`,
+        points: [
+          [xOf(t), top],
+          [xOf(t), top + H],
+        ],
+        stroke: GRID,
+        strokeWidth: 1,
+      });
+    }
+    const label = fmtNumber(t, unit);
+    const m = ctx.measure(label, TICK);
+    items.push({
+      kind: "text",
+      key: `tick${k}`,
+      x: xOf(t) - m.width / 2,
+      y: top + H + 6,
+      text: label,
+      size: TICK,
+      color: MUTED,
+    });
+  });
+  const paints = series.map((s, k) => seriesPaint(ctx, s.color, k));
+  categories.forEach((_, j) => {
+    const m = ctx.measure(names[j], 14);
+    items.push({
+      kind: "text",
+      key: `cat${j}`,
+      x: left - 10 - m.width,
+      y: top + slot * j + (slot - m.height) / 2,
+      text: names[j],
+      size: 14,
+      color: INK,
+    });
+    const barH = (slot - 12) / per;
+    let right = 0;
+    let leftAcc = 0;
+    series.forEach((s, k) => {
+      const v = s.values[j];
+      let x0: number;
+      let x1: number;
+      let y: number;
+      if (stacked) {
+        const from = v >= 0 ? right : leftAcc;
+        if (v >= 0) {
+          right += v;
+        } else {
+          leftAcc += v;
+        }
+        x0 = xOf(from);
+        x1 = xOf(from + v);
+        y = top + slot * j + 6;
+      } else {
+        x0 = base;
+        x1 = xOf(v);
+        y = top + slot * j + 6 + barH * k;
+      }
+      const x = Math.min(x0, x1);
+      const w = Math.abs(x1 - x0);
+      if (w > 0.5) {
+        items.push({
+          kind: "rect",
+          key: `bar${k}-${j}`,
+          x,
+          y,
+          w,
+          h: Math.max(2, barH - (stacked ? 0 : 2)),
+          stroke: paints[k].stroke,
+          fill: paints[k].stroke,
+          strokeWidth: 1,
+        });
+      }
+      if (showValues && !stacked) {
+        const label = fmtNumber(v, unit);
+        const lm = ctx.measure(label, 12);
+        items.push({
+          kind: "text",
+          key: `val${k}-${j}`,
+          x: v >= 0 ? x + w + 4 : x - lm.width - 4,
+          y: y + (barH - lm.height) / 2,
+          text: label,
+          size: 12,
+          color: INK,
+        });
+      }
+    });
+    if (showValues && stacked) {
+      const label = fmtNumber(right + leftAcc, unit);
+      const lm = ctx.measure(label, 12);
+      items.push({
+        kind: "text",
+        key: `sum${j}`,
+        x: xOf(right) + 4,
+        y: top + slot * j + (slot - lm.height) / 2,
+        text: label,
+        size: 12,
+        color: INK,
+      });
+    }
+  });
+  items.push({
+    kind: "line",
+    key: "axis-y",
+    points: [
+      [base, top],
+      [base, top + H],
+    ],
+    stroke: INK,
+    strokeWidth: 1.5,
+  });
+  (spec.lines as Record<string, unknown>[] | undefined)?.forEach((l, k) => {
+    const paint = ctx.paint(l.color as string | undefined, "red");
+    const x = xOf(l.value as number);
+    items.push({
+      kind: "line",
+      key: `ref${k}`,
+      points: [
+        [x, top - 4],
+        [x, top + H],
+      ],
+      stroke: paint.stroke,
+      strokeWidth: 1.5,
+      line: "dashed",
+    });
+    if (l.label) {
+      const m = ctx.measure(l.label as string, 13);
+      items.push({
+        kind: "text",
+        key: `ref${k}-t`,
+        x: x - m.width / 2,
+        y: top - 6 - m.height,
+        text: l.label as string,
+        size: 13,
+        color: paint.stroke,
+      });
+    }
+  });
+  let height = top + H + 6 + ctx.measure("0", TICK).height;
+  if (spec.xLabel) {
+    const m = ctx.measure(spec.xLabel as string, 14);
+    items.push({
+      kind: "text",
+      key: "xname",
+      x: left + (plotW - m.width) / 2,
+      y: height + 6,
+      text: spec.xLabel as string,
+      size: 14,
+      color: MUTED,
+    });
+    height += 6 + m.height;
+  }
+  let width = Math.max(left + W, title.width);
+  const named = series.flatMap((s, k) =>
+    s.label ? [{ label: s.label, paint: paints[k] }] : [],
+  );
+  if (named.length > 1 || (spec.legend && named.length)) {
+    const legend = legendRow(named, left, height + 14, W, ctx);
+    items.push(...legend.items);
+    height += 14 + legend.height;
+    width = Math.max(width, left + legend.width);
+  }
+  return {
+    width,
+    height: height + 4,
+    items: [box(width, height + 4), ...items],
+  };
+};
+
+type Slice = { label: string; value: number; color?: string };
+
+const arc = (
+  cx: number,
+  cy: number,
+  r: number,
+  a0: number,
+  a1: number,
+): [number, number][] => {
+  const steps = Math.max(2, Math.ceil(((a1 - a0) / (Math.PI * 2)) * 96));
+  const out: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = a0 + ((a1 - a0) * i) / steps;
+    out.push([cx + r * Math.cos(t), cy + r * Math.sin(t)]);
+  }
+  return out;
+};
+
+const drawPie = (spec: Record<string, unknown>, ctx: DrawContext): Drawing => {
+  const slices = spec.slices as Slice[];
+  const unit = spec.unit as string | undefined;
+  const donut = spec.type === "donut";
+  const title = titleItems(spec.title as string | undefined, ctx);
+  const R = Math.round(((spec.width as number | undefined) ?? 300) / 2);
+  const cx = R + 4;
+  const cy = title.height + 8 + R;
+  const inner = donut ? R * 0.56 : 0;
+  const total = slices.reduce((sum, s) => sum + s.value, 0);
+  const items: Item[] = [...title.items];
+  const paints = slices.map((s, k) => seriesPaint(ctx, s.color, k));
+  let a = -Math.PI / 2;
+  slices.forEach((s, k) => {
+    const sweep = (s.value / total) * Math.PI * 2;
+    if (sweep <= 0) {
+      return;
+    }
+    const outer = arc(cx, cy, R, a, a + sweep);
+    const points: [number, number][] = donut
+      ? [...outer, ...arc(cx, cy, inner, a, a + sweep).reverse()]
+      : [[cx, cy], ...outer];
+    items.push({
+      kind: "line",
+      key: `slice${k}`,
+      points: [...points, points[0]],
+      stroke: "#ffffff",
+      strokeWidth: 2,
+      closed: true,
+      fill: paints[k].stroke,
+    });
+    const share = s.value / total;
+    if (share >= 0.05) {
+      const mid = a + sweep / 2;
+      const r = donut ? (R + inner) / 2 : R * 0.62;
+      const label = `${Math.round(share * 100)}%`;
+      const m = ctx.measure(label, 14);
+      items.push({
+        kind: "text",
+        key: `pct${k}`,
+        x: cx + r * Math.cos(mid) - m.width / 2,
+        y: cy + r * Math.sin(mid) - m.height / 2,
+        text: label,
+        size: 14,
+        color: "#ffffff",
+      });
+    }
+    a += sweep;
+  });
+  if (donut && spec.center) {
+    const text = wrap(spec.center as string, inner * 1.6, 20, ctx.measure);
+    const m = ctx.measure(text, 20);
+    items.push({
+      kind: "text",
+      key: "center",
+      x: cx - m.width / 2,
+      y: cy - m.height / 2,
+      text,
+      size: 20,
+      color: INK,
+      align: "center",
+      w: m.width,
+    });
+  }
+  // the key on the right: name, value and share
+  const lx = cx + R + 28;
+  let ly = Math.max(title.height + 8, cy - (slices.length * 26) / 2);
+  let width = lx;
+  slices.forEach((s, k) => {
+    const label = `${s.label}  ${fmtNumber(s.value, unit)} (${Math.round(
+      (s.value / total) * 100,
+    )}%)`;
+    const m = ctx.measure(label, 14);
+    items.push(
+      {
+        kind: "rect",
+        key: `lg${k}`,
+        x: lx,
+        y: ly + 2,
+        w: 14,
+        h: 14,
+        stroke: paints[k].stroke,
+        fill: paints[k].stroke,
+        strokeWidth: 1,
+      },
+      {
+        kind: "text",
+        key: `lg${k}-t`,
+        x: lx + 22,
+        y: ly,
+        text: label,
+        size: 14,
+        color: INK,
+      },
+    );
+    width = Math.max(width, lx + 22 + m.width);
+    ly += 26;
+  });
+  width = Math.max(width, title.width);
+  const height = Math.max(cy + R + 6, ly);
+  return { width, height, items: [box(width, height), ...items] };
+};
+
+const drawFunnel = (
+  spec: Record<string, unknown>,
+  ctx: DrawContext,
+): Drawing => {
+  const slices = spec.slices as Slice[];
+  const unit = spec.unit as string | undefined;
+  const W = (spec.width as number | undefined) ?? 420;
+  const title = titleItems(spec.title as string | undefined, ctx);
+  const top = title.height + 6;
+  const ROW = 50;
+  const GAP = 4;
+  const first = slices[0].value || Math.max(...slices.map((s) => s.value));
+  const widthOf = (v: number) => Math.max(0.14, Math.min(1, v / first)) * W;
+  const items: Item[] = [...title.items];
+  const labelX = W + 20;
+  let width = labelX;
+  slices.forEach((s, k) => {
+    const paint = seriesPaint(ctx, s.color, k);
+    const w0 = widthOf(s.value);
+    const next = slices[k + 1];
+    const w1 = next ? widthOf(next.value) : w0 * 0.8;
+    const y = top + k * (ROW + GAP);
+    const points: [number, number][] = [
+      [(W - w0) / 2, y],
+      [(W + w0) / 2, y],
+      [(W + w1) / 2, y + ROW],
+      [(W - w1) / 2, y + ROW],
+    ];
+    items.push({
+      kind: "line",
+      key: `stage${k}`,
+      points: [...points, points[0]],
+      stroke: paint.stroke,
+      strokeWidth: 1,
+      closed: true,
+      fill: paint.stroke,
+    });
+    const value = fmtNumber(s.value, unit);
+    const vm = ctx.measure(value, 16);
+    if (vm.width + 12 < Math.min(w0, w1)) {
+      items.push({
+        kind: "text",
+        key: `val${k}`,
+        x: (W - vm.width) / 2,
+        y: y + (ROW - vm.height) / 2,
+        text: value,
+        size: 16,
+        color: "#ffffff",
+      });
+    }
+    const label = `${s.label} — ${value}${
+      k ? ` (${Math.round((s.value / first) * 100)}%)` : ""
+    }`;
+    const m = ctx.measure(label, 15);
+    items.push({
+      kind: "text",
+      key: `name${k}`,
+      x: labelX,
+      y: y + (ROW - m.height) / 2,
+      text: label,
+      size: 15,
+      color: INK,
+    });
+    width = Math.max(width, labelX + m.width);
+  });
+  width = Math.max(width, title.width);
+  const height = top + slices.length * (ROW + GAP);
+  return { width, height, items: [box(width, height), ...items] };
+};
+
+const DOT_SIZES: Record<string, number> = { s: 6, m: 10, l: 16 };
+
+const drawScatter = (
+  spec: Record<string, unknown>,
+  ctx: DrawContext,
+): Drawing => {
+  const series = (spec.series as Record<string, unknown>[]).map((s, k) => ({
+    label: s.label as string | undefined,
+    paint: seriesPaint(ctx, s.color, k),
+    line: !!s.line,
+    dots: s.dots as boolean | undefined,
+    points: (s.points as unknown[]).map((p, j) => pointOf(p, `${k}.${j}`)),
+  }));
+  const all = series.flatMap((s) => s.points);
+  const origin = !!spec.origin;
+  const W = (spec.width as number | undefined) ?? 520;
+  const H = (spec.height as number | undefined) ?? 340;
+  const xs = all.map((p) => p.x).concat(origin ? [0] : []);
+  const ys = all.map((p) => p.y).concat(origin ? [0] : []);
+  (spec.lines as { value: number }[] | undefined)?.forEach((l) =>
+    ys.push(l.value),
+  );
+  const xr = niceTicks(
+    (spec.xMin as number | undefined) ?? Math.min(...xs),
+    (spec.xMax as number | undefined) ?? Math.max(...xs),
+  );
+  const yr = niceTicks(
+    (spec.min as number | undefined) ?? Math.min(...ys),
+    (spec.max as number | undefined) ?? Math.max(...ys),
+  );
+  const title = titleItems(spec.title as string | undefined, ctx);
+  const items: Item[] = [...title.items];
+  const top = title.height + 10;
+  const yName = yAxisName(spec.yLabel as string | undefined, top, H, ctx);
+  items.push(...yName.items);
+  const tickW = Math.max(
+    ...yr.ticks.map((t) => ctx.measure(fmtNumber(t), TICK).width),
+  );
+  const left = yName.width + tickW + 10;
+  const xOf = (v: number) => left + ((v - xr.lo) / (xr.hi - xr.lo)) * W;
+  const yOf = (v: number) => top + H - ((v - yr.lo) / (yr.hi - yr.lo)) * H;
+  yr.ticks.forEach((t, k) => {
+    if (spec.grid !== false) {
+      items.push({
+        kind: "line",
+        key: `gy${k}`,
+        points: [
+          [left, yOf(t)],
+          [left + W, yOf(t)],
+        ],
+        stroke: GRID,
+        strokeWidth: 1,
+      });
+    }
+    const label = fmtNumber(t);
+    const m = ctx.measure(label, TICK);
+    items.push({
+      kind: "text",
+      key: `ty${k}`,
+      x: left - 8 - m.width,
+      y: yOf(t) - m.height / 2,
+      text: label,
+      size: TICK,
+      color: MUTED,
+    });
+  });
+  const tickH = ctx.measure("0", TICK).height;
+  xr.ticks.forEach((t, k) => {
+    if (spec.grid !== false) {
+      items.push({
+        kind: "line",
+        key: `gx${k}`,
+        points: [
+          [xOf(t), top],
+          [xOf(t), top + H],
+        ],
+        stroke: GRID,
+        strokeWidth: 1,
+      });
+    }
+    const label = fmtNumber(t);
+    const m = ctx.measure(label, TICK);
+    items.push({
+      kind: "text",
+      key: `tx${k}`,
+      x: xOf(t) - m.width / 2,
+      y: top + H + 6,
+      text: label,
+      size: TICK,
+      color: MUTED,
+    });
+  });
+  // the axes: through zero for a graph of a function, else along the edges
+  const ax = origin && yr.lo <= 0 && yr.hi >= 0 ? yOf(0) : top + H;
+  const ay = origin && xr.lo <= 0 && xr.hi >= 0 ? xOf(0) : left;
+  items.push(
+    {
+      kind: origin ? "arrow" : "line",
+      key: "axis-x",
+      points: [
+        [left, ax],
+        [left + W + (origin ? 12 : 0), ax],
+      ],
+      stroke: INK,
+      strokeWidth: 1.5,
+      head: origin ? "arrow" : "none",
+    },
+    {
+      kind: origin ? "arrow" : "line",
+      key: "axis-y",
+      points: [
+        [ay, top + H],
+        [ay, top - (origin ? 12 : 0)],
+      ],
+      stroke: INK,
+      strokeWidth: 1.5,
+      head: origin ? "arrow" : "none",
+    },
+  );
+  referenceLines(spec, items, left, W, yOf, ctx);
+  series.forEach((s, k) => {
+    const pts = s.points.map((p) => [xOf(p.x), yOf(p.y)] as [number, number]);
+    if (s.line && pts.length > 1) {
+      items.push({
+        kind: "line",
+        key: `path${k}`,
+        points: pts,
+        stroke: s.paint.stroke,
+        strokeWidth: 2.5,
+      });
+    }
+    const dots = s.dots ?? !(s.line && pts.length > 24);
+    s.points.forEach((p, j) => {
+      const [x, y] = pts[j];
+      if (dots) {
+        const d = DOT_SIZES[p.size ?? "m"];
+        items.push({
+          kind: "ellipse",
+          key: `pt${k}-${j}`,
+          x: x - d / 2,
+          y: y - d / 2,
+          w: d,
+          h: d,
+          stroke: s.paint.stroke,
+          fill: s.paint.stroke,
+          strokeWidth: 1,
+          opacity: 85,
+        });
+      }
+      if (p.label) {
+        const m = ctx.measure(p.label, 13);
+        items.push({
+          kind: "text",
+          key: `pl${k}-${j}`,
+          x: x + 8,
+          y: y - m.height / 2,
+          text: p.label,
+          size: 13,
+          color: INK,
+        });
+      }
+    });
+  });
+  let height = top + H + 6 + tickH;
+  if (spec.xLabel) {
+    const m = ctx.measure(spec.xLabel as string, 14);
+    items.push({
+      kind: "text",
+      key: "xname",
+      x: left + (W - m.width) / 2,
+      y: height + 6,
+      text: spec.xLabel as string,
+      size: 14,
+      color: MUTED,
+    });
+    height += 6 + m.height;
+  }
+  let width = Math.max(left + W + 16, title.width);
+  const named = series.flatMap((s) =>
+    s.label ? [{ label: s.label, paint: s.paint }] : [],
+  );
+  if (named.length > 1 || (spec.legend && named.length)) {
+    const legend = legendRow(named, left, height + 14, W, ctx);
+    items.push(...legend.items);
+    height += 14 + legend.height;
+    width = Math.max(width, left + legend.width);
+  }
+  return {
+    width,
+    height: height + 4,
+    items: [box(width, height + 4), ...items],
+  };
+};
+
+// ---------------------------------------------------------------- wardley
+
+// a Wardley map: components up a value chain (visible to the user at the
+// top) and across evolution (genesis to commodity), the links between them,
+// where each is moving and what holds it back
+
+const WARDLEY_STAGES = [
+  "Genesis",
+  "Custom-Built",
+  "Product (+rental)",
+  "Commodity (+utility)",
+];
+const WARDLEY_KINDS = ["component", "anchor", "market", "ecosystem"] as const;
+const WARDLEY_METHODS = ["build", "buy", "outsource"] as const;
+
+const validateWardley = (spec: Record<string, unknown>) => {
+  str(spec.title, "title");
+  num(spec.width, "width", 400, 1600);
+  num(spec.height, "height", 300, 1200);
+  if (spec.stages !== undefined) {
+    const stages = list(spec.stages, "stages", 6);
+    if (stages.length < 2) {
+      refuse("stages names at least two stages of evolution");
+    }
+    stages.forEach((s, k) => str(s, `stages[${k}]`, true));
+  }
+  const components = list(spec.components, "components", 80);
+  if (!components.length) {
+    refuse(
+      "a wardley map needs `components`: [{id, label, evolution, visibility}]",
+    );
+  }
+  const ids = new Set<string>();
+  components.forEach((raw, k) => {
+    const at = `components[${k}]`;
+    if (!isObject(raw)) {
+      refuse(`${at} must be {id, label, evolution, visibility}`);
+    }
+    const c = raw as Record<string, unknown>;
+    const id = str(c.id, `${at}.id`, true)!;
+    if (ids.has(id)) {
+      refuse(`${at}.id "${id}" is used twice`);
+    }
+    ids.add(id);
+    str(c.label, `${at}.label`);
+    for (const key of ["evolution", "visibility"]) {
+      if (num(c[key], `${at}.${key}`, 0, 1) === undefined) {
+        refuse(`${at}.${key} is a number from 0 to 1`);
+      }
+    }
+    num(c.evolve, `${at}.evolve`, 0, 1);
+    oneOf(c.kind, `${at}.kind`, WARDLEY_KINDS);
+    oneOf(c.method, `${at}.method`, WARDLEY_METHODS);
+    flag(c.inertia, `${at}.inertia`);
+    str(c.color, `${at}.color`);
+  });
+  list(spec.links ?? [], "links", 200).forEach((raw, k) => {
+    const at = `links[${k}]`;
+    const l: Record<string, unknown> = Array.isArray(raw)
+      ? { from: raw[0], to: raw[1] }
+      : isObject(raw)
+      ? raw
+      : refuse(`${at} must be [from, to] or {from, to, label}`);
+    for (const end of ["from", "to"] as const) {
+      const id = str(l[end], `${at}.${end}`, true)!;
+      if (!ids.has(id)) {
+        refuse(`${at}.${end} "${id}" is not a component`);
+      }
+    }
+    str(l.label, `${at}.label`);
+    oneOf(l.line, `${at}.line`, LINES);
+  });
+  list(spec.notes ?? [], "notes", 30).forEach((raw, k) => {
+    const at = `notes[${k}]`;
+    if (!isObject(raw)) {
+      return refuse(`${at} must be {text, evolution, visibility}`);
+    }
+    str(raw.text, `${at}.text`, true);
+    for (const key of ["evolution", "visibility"]) {
+      if (num(raw[key], `${at}.${key}`, 0, 1) === undefined) {
+        refuse(`${at}.${key} is a number from 0 to 1`);
+      }
+    }
+  });
+};
+
+const drawWardley = (
+  spec: Record<string, unknown>,
+  ctx: DrawContext,
+): Drawing => {
+  const stages = (spec.stages as string[] | undefined) ?? WARDLEY_STAGES;
+  const W = (spec.width as number | undefined) ?? 820;
+  const H = (spec.height as number | undefined) ?? 520;
+  const title = titleItems(spec.title as string | undefined, ctx);
+  const items: Item[] = [...title.items];
+  const top = title.height + 10;
+  const yName = yAxisName("Value Chain", top, H, ctx);
+  items.push(...yName.items);
+  const left = yName.width + 64;
+  const xOf = (e: number) => left + e * W;
+  const yOf = (v: number) => top + (1 - v) * H;
+  // the frame, the stage boundaries and their names
+  items.push(
+    {
+      kind: "arrow",
+      key: "axis-y",
+      points: [
+        [left, top + H],
+        [left, top - 8],
+      ],
+      stroke: INK,
+      strokeWidth: 1.5,
+      head: "arrow",
+    },
+    {
+      kind: "arrow",
+      key: "axis-x",
+      points: [
+        [left, top + H],
+        [left + W + 8, top + H],
+      ],
+      stroke: INK,
+      strokeWidth: 1.5,
+      head: "arrow",
+    },
+  );
+  for (const [key, text, y] of [
+    ["vis", "Visible", top],
+    ["invis", "Invisible", top + H - 18],
+  ] as const) {
+    items.push({
+      kind: "text",
+      key,
+      x: left - 8 - ctx.measure(text, 13).width,
+      y,
+      text,
+      size: 13,
+      color: MUTED,
+    });
+  }
+  const stageW = W / stages.length;
+  stages.forEach((name, k) => {
+    if (k) {
+      items.push({
+        kind: "line",
+        key: `stage${k}`,
+        points: [
+          [left + stageW * k, top],
+          [left + stageW * k, top + H],
+        ],
+        stroke: RULE,
+        strokeWidth: 1,
+        line: "dashed",
+      });
+    }
+    const text = wrap(name, stageW - 8, 13, ctx.measure);
+    const m = ctx.measure(text, 13);
+    items.push({
+      kind: "text",
+      key: `stage${k}-t`,
+      x: left + stageW * k + (stageW - m.width) / 2,
+      y: top + H + 6,
+      text,
+      size: 13,
+      color: MUTED,
+      align: "center",
+      w: m.width,
+    });
+  });
+  const evolutionName = ctx.measure("Evolution", 14);
+  const stageNamesH = Math.max(
+    ...stages.map(
+      (s) => ctx.measure(wrap(s, stageW - 8, 13, ctx.measure), 13).height,
+    ),
+  );
+  items.push({
+    kind: "text",
+    key: "evolution",
+    x: left + W - evolutionName.width,
+    y: top + H + 10 + stageNamesH,
+    text: "Evolution",
+    size: 14,
+    color: MUTED,
+  });
+  const R = 7;
+  const comps = new Map<
+    string,
+    { x: number; y: number; r: number; c: Record<string, unknown> }
+  >();
+  for (const c of spec.components as Record<string, unknown>[]) {
+    comps.set(c.id as string, {
+      x: xOf(c.evolution as number),
+      y: yOf(c.visibility as number),
+      r: c.kind === "anchor" ? 0 : c.kind === "market" ? R + 4 : R,
+      c,
+    });
+  }
+  // what a component's builders choose, under everything
+  for (const { x, y, c } of comps.values()) {
+    if (c.method) {
+      const fill =
+        c.method === "build"
+          ? "#ffffff"
+          : c.method === "buy"
+          ? "#dee2e6"
+          : "#868e96";
+      items.push({
+        kind: "ellipse",
+        key: `method-${c.id}`,
+        x: x - 20,
+        y: y - 20,
+        w: 40,
+        h: 40,
+        stroke: "#868e96",
+        fill,
+        strokeWidth: 1,
+        opacity: 70,
+      });
+    }
+  }
+  // links, from rim to rim
+  (spec.links as unknown[] | undefined)?.forEach((raw, k) => {
+    const l = (
+      Array.isArray(raw) ? { from: raw[0], to: raw[1] } : raw
+    ) as Record<string, unknown>;
+    const a = comps.get(l.from as string)!;
+    const b = comps.get(l.to as string)!;
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const d = Math.hypot(dx, dy) || 1;
+    const p0: [number, number] = [
+      a.x + (dx / d) * (a.r || 4),
+      a.y + (dy / d) * (a.r || 10),
+    ];
+    const p1: [number, number] = [b.x - (dx / d) * b.r, b.y - (dy / d) * b.r];
+    items.push({
+      kind: "line",
+      key: `link${k}`,
+      points: [p0, p1],
+      stroke: "#495057",
+      strokeWidth: 1.5,
+      line: l.line as LineStyle | undefined,
+    });
+    if (l.label) {
+      const m = ctx.measure(l.label as string, 12);
+      items.push({
+        kind: "text",
+        key: `link${k}-t`,
+        x: (p0[0] + p1[0]) / 2 + 4,
+        y: (p0[1] + p1[1]) / 2 - m.height / 2,
+        text: l.label as string,
+        size: 12,
+        color: MUTED,
+      });
+    }
+  });
+  for (const { x, y, c } of comps.values()) {
+    const id = c.id as string;
+    const paint = ctx.paint(c.color as string | undefined, "black");
+    const label = (c.label as string | undefined) ?? id;
+    if (c.evolve !== undefined) {
+      const tx = xOf(c.evolve as number);
+      items.push(
+        {
+          kind: "arrow",
+          key: `evolve-${id}`,
+          points: [
+            [x + (tx > x ? R + 2 : -R - 2), y],
+            [tx + (tx > x ? -R - 2 : R + 2), y],
+          ],
+          stroke: "#e03131",
+          strokeWidth: 1.5,
+          line: "dashed",
+          head: "arrow",
+        },
+        {
+          kind: "ellipse",
+          key: `ghost-${id}`,
+          x: tx - R,
+          y: y - R,
+          w: R * 2,
+          h: R * 2,
+          stroke: "#e03131",
+          fill: "#ffffff",
+          strokeWidth: 1.5,
+        },
+      );
+    }
+    if (c.inertia) {
+      items.push({
+        kind: "rect",
+        key: `inertia-${id}`,
+        x: x + R + 10,
+        y: y - 12,
+        w: 6,
+        h: 24,
+        stroke: INK,
+        fill: INK,
+        strokeWidth: 1,
+      });
+    }
+    if (c.kind === "anchor") {
+      const m = ctx.measure(label, 16);
+      items.push({
+        kind: "text",
+        key: `c-${id}`,
+        x: x - m.width / 2,
+        y: y - m.height / 2,
+        text: label,
+        size: 16,
+        color: paint.stroke,
+      });
+      continue;
+    }
+    if (c.kind === "market") {
+      items.push({
+        kind: "ellipse",
+        key: `c-${id}`,
+        x: x - R - 4,
+        y: y - R - 4,
+        w: (R + 4) * 2,
+        h: (R + 4) * 2,
+        stroke: paint.stroke,
+        fill: "#ffffff",
+        strokeWidth: 1.5,
+      });
+      for (const [k, [ox, oy]] of [
+        [0, -4],
+        [-4, 3],
+        [4, 3],
+      ].entries()) {
+        items.push({
+          kind: "ellipse",
+          key: `c-${id}-m${k}`,
+          x: x + ox - 2,
+          y: y + oy - 2,
+          w: 4,
+          h: 4,
+          stroke: paint.stroke,
+          fill: paint.stroke,
+          strokeWidth: 1,
+        });
+      }
+    } else {
+      items.push({
+        kind: "ellipse",
+        key: `c-${id}`,
+        x: x - R,
+        y: y - R,
+        w: R * 2,
+        h: R * 2,
+        stroke: paint.stroke,
+        fill: c.kind === "ecosystem" ? paint.fill : "#ffffff",
+        strokeWidth: c.kind === "ecosystem" ? 3 : 1.5,
+      });
+    }
+    const m = ctx.measure(label, 14);
+    items.push({
+      kind: "text",
+      key: `c-${id}-t`,
+      x: x + R + (c.inertia ? 22 : 6),
+      y: y - m.height - 2,
+      text: label,
+      size: 14,
+      color: paint.stroke,
+    });
+  }
+  (spec.notes as Record<string, unknown>[] | undefined)?.forEach((n, k) => {
+    const text = wrap(n.text as string, 200, 13, ctx.measure);
+    items.push({
+      kind: "text",
+      key: `note${k}`,
+      x: xOf(n.evolution as number),
+      y: yOf(n.visibility as number),
+      text,
+      size: 13,
+      color: "#1971c2",
+    });
+  });
+  const width = Math.max(left + W + 16, title.width);
+  const height = top + H + 10 + stageNamesH + evolutionName.height + 4;
+  return { width, height, items: [box(width, height), ...items] };
+};
+
+// ---------------------------------------------------------------- library
+
+// an item from one of the community libraries at libraries.excalidraw.com
+// (an AWS icon, a logic gate, a floor-plan sofa): the agent names the
+// library and the item, the command fetches its elements, and the block
+// redraws them as they were drawn, at the size asked
+
+const LIBRARY_TYPES = new Set([
+  "rectangle",
+  "ellipse",
+  "diamond",
+  "line",
+  "arrow",
+  "freedraw",
+  "text",
+]);
+
+export const MAX_LIBRARY_JSON = 600_000;
+
+const validateLibrary = (spec: Record<string, unknown>) => {
+  str(spec.library, "library");
+  if (spec.item !== undefined && typeof spec.item !== "number") {
+    str(spec.item, "item");
+  }
+  str(spec.label, "label");
+  str(spec.source, "source");
+  num(spec.width, "width", 12, 1600);
+  if (spec.elements === undefined) {
+    refuse(
+      "a library op names `library` and `item`; cerebrate canvas and gexcal fetch the item's elements from libraries.excalidraw.com",
+    );
+  }
+  const els = list(spec.elements, "elements", 2000);
+  if (JSON.stringify(els).length > MAX_LIBRARY_JSON) {
+    refuse("the library item is larger than 600 KB");
+  }
+  els.forEach((e, k) => {
+    if (!isObject(e) || typeof e.type !== "string") {
+      refuse(`elements[${k}] is not an Excalidraw element`);
+    }
+  });
+  if (!els.some((e) => LIBRARY_TYPES.has((e as { type: string }).type))) {
+    refuse(
+      "the library item has nothing this canvas draws (pictures and frames are not drawn)",
+    );
+  }
+};
+
+const HEAD_NAMES: Record<string, Head> = {
+  dot: "circle",
+  crowfoot_one: "cardinality_one",
+  crowfoot_many: "cardinality_many",
+  crowfoot_one_or_many: "cardinality_one_or_many",
+};
+const KNOWN_HEADS = new Set<string>([
+  "arrow",
+  "bar",
+  "circle",
+  "circle_outline",
+  "triangle",
+  "triangle_outline",
+  "diamond",
+  "diamond_outline",
+  "cardinality_one",
+  "cardinality_many",
+  "cardinality_one_or_many",
+  "cardinality_exactly_one",
+  "cardinality_zero_or_one",
+  "cardinality_zero_or_many",
+]);
+const headOfLib = (v: unknown): Head =>
+  typeof v !== "string"
+    ? "none"
+    : KNOWN_HEADS.has(v)
+    ? (v as Head)
+    : HEAD_NAMES[v] ?? "arrow";
+
+const fillStyleOf = (v: unknown): ShapeItem["fillStyle"] =>
+  v === "hachure" || v === "cross-hatch" || v === "solid"
+    ? v
+    : v === "zigzag" || v === "zigzag-line" || v === "dots"
+    ? "hachure"
+    : "solid";
+
+const lineStyleOf = (v: unknown): LineStyle | undefined =>
+  v === "dashed" || v === "dotted" ? v : undefined;
+
+const numberOr = (v: unknown, fallback: number) =>
+  typeof v === "number" && Number.isFinite(v) ? v : fallback;
+
+const drawLibrary = (
+  spec: Record<string, unknown>,
+  ctx: DrawContext,
+): Drawing => {
+  const raw = (spec.elements as Record<string, unknown>[]).filter(
+    (e) => !e.isDeleted && LIBRARY_TYPES.has(e.type as string),
+  );
+  // every element's points in scene coordinates, turned by its angle
+  const absolute = (e: Record<string, unknown>): [number, number][] => {
+    const x = numberOr(e.x, 0);
+    const y = numberOr(e.y, 0);
+    const pts = Array.isArray(e.points)
+      ? (e.points as unknown[]).filter(
+          (p): p is [number, number] =>
+            Array.isArray(p) &&
+            typeof p[0] === "number" &&
+            typeof p[1] === "number",
+        )
+      : [];
+    const angle = numberOr(e.angle, 0);
+    const cx = x + numberOr(e.width, 0) / 2;
+    const cy = y + numberOr(e.height, 0) / 2;
+    return pts.map(([px, py]) => {
+      const ax = x + px;
+      const ay = y + py;
+      if (!angle) {
+        return [ax, ay];
+      }
+      const c = Math.cos(angle);
+      const s = Math.sin(angle);
+      return [
+        cx + (ax - cx) * c - (ay - cy) * s,
+        cy + (ax - cx) * s + (ay - cy) * c,
+      ];
+    });
+  };
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const extend = (x: number, y: number) => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
+  for (const e of raw) {
+    if (Array.isArray(e.points)) {
+      absolute(e).forEach(([x, y]) => extend(x, y));
+    } else {
+      const x = numberOr(e.x, 0);
+      const y = numberOr(e.y, 0);
+      extend(x, y);
+      extend(x + numberOr(e.width, 0), y + numberOr(e.height, 0));
+    }
+  }
+  if (!Number.isFinite(minX)) {
+    minX = minY = 0;
+    maxX = maxY = 1;
+  }
+  const natural = Math.max(1, maxX - minX);
+  const scale = spec.width
+    ? (spec.width as number) / natural
+    : natural > 1200
+    ? 1200 / natural
+    : 1;
+  const tx = (x: number) => (x - minX) * scale;
+  const ty = (y: number) => (y - minY) * scale;
+  const stroke = (e: Record<string, unknown>) =>
+    Math.min(8, Math.max(0.5, numberOr(e.strokeWidth, 1) * Math.min(1, scale)));
+  const items: Item[] = [];
+  raw.forEach((e, k) => {
+    const key = `l${k}`;
+    const color = typeof e.strokeColor === "string" ? e.strokeColor : INK;
+    const fill =
+      typeof e.backgroundColor === "string" ? e.backgroundColor : "transparent";
+    const opacity = numberOr(e.opacity, 100);
+    const roughness = numberOr(e.roughness, 0);
+    const angle = numberOr(e.angle, 0) || undefined;
+    switch (e.type) {
+      case "text": {
+        const text = String(e.originalText ?? e.text ?? "");
+        if (!text.trim()) {
+          return;
+        }
+        items.push({
+          kind: "text",
+          key,
+          x: tx(numberOr(e.x, 0)),
+          y: ty(numberOr(e.y, 0)),
+          text,
+          size: Math.max(6, numberOr(e.fontSize, 20) * scale),
+          color,
+          align: (e.textAlign as Align | undefined) ?? "left",
+          w: numberOr(e.width, 0) * scale || undefined,
+          font: typeof e.fontFamily === "number" ? e.fontFamily : undefined,
+          opacity,
+          angle,
+        });
+        return;
+      }
+      case "line":
+      case "arrow": {
+        const pts = absolute(e).map(
+          ([x, y]) => [tx(x), ty(y)] as [number, number],
+        );
+        if (pts.length < 2) {
+          return;
+        }
+        const first = pts[0];
+        const last = pts[pts.length - 1];
+        const closed =
+          e.type === "line" &&
+          (e.polygon === true ||
+            (fill !== "transparent" &&
+              Math.hypot(first[0] - last[0], first[1] - last[1]) < 1));
+        items.push({
+          kind: e.type,
+          key,
+          points: pts,
+          stroke: color,
+          strokeWidth: stroke(e),
+          line: lineStyleOf(e.strokeStyle),
+          opacity,
+          roughness,
+          curved: !!e.roundness,
+          ...(closed
+            ? { closed: true, fill, fillStyle: fillStyleOf(e.fillStyle) }
+            : null),
+          ...(e.type === "arrow"
+            ? {
+                head: headOfLib(e.endArrowhead),
+                tail: headOfLib(e.startArrowhead),
+              }
+            : null),
+        });
+        return;
+      }
+      case "freedraw": {
+        const pts = absolute(e).map(
+          ([x, y]) => [tx(x), ty(y)] as [number, number],
+        );
+        if (pts.length < 2) {
+          return;
+        }
+        items.push({
+          kind: "freedraw",
+          key,
+          points: pts,
+          stroke: color,
+          strokeWidth: stroke(e),
+          opacity,
+        });
+        return;
+      }
+      default:
+        items.push({
+          kind:
+            e.type === "rectangle" ? "rect" : (e.type as "ellipse" | "diamond"),
+          key,
+          x: tx(numberOr(e.x, 0)),
+          y: ty(numberOr(e.y, 0)),
+          w: numberOr(e.width, 0) * scale,
+          h: numberOr(e.height, 0) * scale,
+          stroke: color,
+          fill,
+          fillStyle: fillStyleOf(e.fillStyle),
+          line: lineStyleOf(e.strokeStyle),
+          strokeWidth: stroke(e),
+          rounded: !!e.roundness,
+          opacity,
+          roughness,
+          angle,
+        });
+    }
+  });
+  let width = natural * scale;
+  let height = (maxY - minY) * scale;
+  if (spec.label) {
+    const text = wrap(
+      spec.label as string,
+      Math.max(width, 120),
+      14,
+      ctx.measure,
+    );
+    const m = ctx.measure(text, 14);
+    items.push({
+      kind: "text",
+      key: "label",
+      x: Math.max(0, (width - m.width) / 2),
+      y: height + 8,
+      text,
+      size: 14,
+      color: MUTED,
+      align: "center",
+      w: m.width,
+    });
+    width = Math.max(width, m.width);
+    height += 8 + m.height;
+  }
+  return { width, height, items: [box(width, height), ...items] };
+};
+
 // --------------------------------------------------------------- registry
 
 const BLOCKS: Record<
@@ -4494,6 +6678,9 @@ const BLOCKS: Record<
   legend: { validate: validateLegend, draw: drawLegend },
   journey: { validate: validateJourney, draw: drawJourney },
   image: { validate: validateImage, draw: drawImage },
+  chart: { validate: validateChart, draw: drawChart },
+  wardley: { validate: validateWardley, draw: drawWardley },
+  library: { validate: validateLibrary, draw: drawLibrary },
 };
 
 export const BLOCK_TYPES = Object.keys(BLOCKS) as BlockType[];
@@ -4570,5 +6757,19 @@ export const summarizeBlock = (
       )} rows`;
     case "image":
       return `image${spec.label ? ` "${String(spec.label)}"` : ""}`;
+    case "chart":
+      return `${String(spec.type)} chart${
+        spec.title ? ` "${String(spec.title)}"` : ""
+      }: ${count(spec.slices) || count(spec.categories)}${
+        spec.slices ? " slices" : spec.categories ? " categories" : ""
+      }${count(spec.series) ? `, ${count(spec.series)} series` : ""}`;
+    case "wardley":
+      return `wardley map: ${count(spec.components)} components, ${count(
+        spec.links,
+      )} links`;
+    case "library":
+      return `library item "${String(spec.item ?? "")}" from ${String(
+        spec.library ?? "a library",
+      )} (${count(spec.elements)} elements)`;
   }
 };

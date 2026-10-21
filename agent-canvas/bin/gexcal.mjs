@@ -6,6 +6,7 @@
 
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -34,10 +35,16 @@ draw (ids are yours: letters, digits, _ . : - >; an edge is from->to by default)
   gexcal apply [ops.json | -]   several ops at once: {"ops":[...]} or [...]
   gexcal mermaid [file.mmd | -] [--prefix P] [--print]
                                 draw a Mermaid diagram (flowchart, sequence, class, ER,
-                                state, mindmap, gantt, quadrant) as editable ops
+                                state, mindmap, gantt, quadrant, pie, xychart, journey,
+                                kanban, timeline) as editable ops
                                 (--print shows the ops instead of drawing them)
   gexcal clear                  remove everything the agent drew
   gexcal undo                   undo the last change on the canvas
+
+libraries (libraries.excalidraw.com; a {"op":"library","library":..,"item":..} op
+           fetches the item it names)
+  gexcal library search [words]  the community libraries whose name or description match
+  gexcal library items <library> the items in one library, numbered
 
 read
   gexcal describe [--json]      the diagram as text, with layout problems
@@ -142,6 +149,214 @@ const inlineImage = (op) => {
     );
   }
   return { ...op, src: `data:${type};base64,${data.toString("base64")}` };
+};
+
+// the community libraries at libraries.excalidraw.com: a library op names a
+// library and an item, and this fetches the item's elements into the op
+const LIBRARY_HOST = "https://libraries.excalidraw.com";
+const LIBRARY_CACHE = path.join(os.homedir(), ".cache", "gexcal", "libraries");
+const LIBRARY_AGE_MS = 24 * 60 * 60 * 1000;
+const LIBRARY_MAX_ITEM = 600_000;
+const LIBRARY_SOURCE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+\.excalidrawlib$/;
+const LIBRARY_KEEP = [
+  "type",
+  "x",
+  "y",
+  "width",
+  "height",
+  "angle",
+  "strokeColor",
+  "backgroundColor",
+  "fillStyle",
+  "strokeWidth",
+  "strokeStyle",
+  "roughness",
+  "opacity",
+  "roundness",
+  "points",
+  "polygon",
+  "startArrowhead",
+  "endArrowhead",
+  "text",
+  "originalText",
+  "fontSize",
+  "fontFamily",
+  "textAlign",
+  "isDeleted",
+];
+
+/** A cached copy younger than a day, else a download (an old copy if that fails). */
+const libraryGet = async (rel) => {
+  const cached = path.join(LIBRARY_CACHE, rel.replaceAll("/", "__"));
+  let stat = null;
+  try {
+    stat = fs.statSync(cached);
+  } catch {}
+  if (stat && Date.now() - stat.mtimeMs < LIBRARY_AGE_MS) {
+    return fs.readFileSync(cached, "utf8");
+  }
+  try {
+    const res = await fetch(`${LIBRARY_HOST}/${rel}`);
+    if (!res.ok) {
+      throw new Error(
+        `libraries.excalidraw.com answered ${res.status} for ${rel}`,
+      );
+    }
+    const text = await res.text();
+    fs.mkdirSync(LIBRARY_CACHE, { recursive: true });
+    fs.writeFileSync(cached, text);
+    return text;
+  } catch (error) {
+    if (stat) {
+      return fs.readFileSync(cached, "utf8");
+    }
+    die(`library: ${error.message}`, 3);
+  }
+};
+
+const libraryCatalog = async () =>
+  JSON.parse(await libraryGet("libraries.json"));
+
+const libraryFind = (catalog, want) => {
+  want = String(want ?? "").trim();
+  if (!want) {
+    die("a library op needs `library`: a name from `gexcal library search`", 2);
+  }
+  const lower = want.toLowerCase();
+  const exact = catalog.filter(
+    (e) =>
+      e.id === want ||
+      e.source === want ||
+      e.name.trim().toLowerCase() === lower,
+  );
+  const partial = catalog.filter(
+    (e) => !exact.includes(e) && e.name.toLowerCase().includes(lower),
+  );
+  for (const found of [exact, partial]) {
+    if (found.length === 1) {
+      return found[0];
+    }
+    if (found.length > 1) {
+      die(
+        `library "${want}" matches ${
+          found.length
+        } libraries; name one by its source: ${found
+          .slice(0, 8)
+          .map((e) => `"${e.name.trim()}" (${e.source})`)
+          .join(", ")}`,
+        2,
+      );
+    }
+  }
+  die(
+    `no library is called "${want}"; find one with \`gexcal library search <words>\``,
+    2,
+  );
+};
+
+const libraryItems = async (entry) => {
+  if (!LIBRARY_SOURCE.test(entry.source)) {
+    die(`library "${entry.name}" has an unexpected source ${entry.source}`, 3);
+  }
+  const file = JSON.parse(await libraryGet(`libraries/${entry.source}`));
+  const items = [
+    ...(file.libraryItems ?? []).map((it, k) => ({
+      name: String(it.name ?? "").trim() || `#${k + 1}`,
+      elements: it.elements ?? [],
+    })),
+    ...(file.library ?? []).map((elements, k) => ({
+      name: `#${k + 1}`,
+      elements,
+    })),
+  ];
+  if (!items.length) {
+    die(`library "${entry.name}" has no items`, 3);
+  }
+  return items;
+};
+
+const libraryPick = (entry, items, want) => {
+  const text =
+    typeof want === "number" ? `#${want}` : String(want ?? "").trim();
+  if (!text) {
+    die(
+      `a library op needs \`item\`: a name from \`gexcal library items "${entry.name.trim()}"\``,
+      2,
+    );
+  }
+  const lower = text.toLowerCase();
+  const named = items.find((it) => it.name.toLowerCase() === lower);
+  const n = Number(text.replace(/^#/, ""));
+  if (
+    (text.startsWith("#") || !named) &&
+    Number.isInteger(n) &&
+    n >= 1 &&
+    n <= items.length
+  ) {
+    return items[n - 1];
+  }
+  if (named) {
+    return named;
+  }
+  const partial = items.filter((it) => it.name.toLowerCase().includes(lower));
+  if (partial.length === 1) {
+    return partial[0];
+  }
+  die(
+    partial.length
+      ? `item "${text}" matches ${
+          partial.length
+        } items in "${entry.name.trim()}": ${partial
+          .slice(0, 10)
+          .map((it) => JSON.stringify(it.name))
+          .join(", ")}`
+      : `library "${entry.name.trim()}" has no item "${text}"; list them with \`gexcal library items "${entry.name.trim()}"\``,
+    2,
+  );
+};
+
+const libraryStrip = (elements) =>
+  elements
+    .filter((e) => e && typeof e.type === "string")
+    .map((e) =>
+      Object.fromEntries(
+        LIBRARY_KEEP.filter((k) => e[k] !== undefined && e[k] !== null).map(
+          (k) => [k, e[k]],
+        ),
+      ),
+    );
+
+/** Library ops that name an item get the item's elements. */
+const inlineLibraries = async (ops) => {
+  let catalog = null;
+  for (const op of ops) {
+    if (
+      op?.op !== "library" ||
+      op.elements ||
+      (op.item === undefined && op.library === undefined)
+    ) {
+      continue;
+    }
+    catalog ??= await libraryCatalog();
+    const entry = libraryFind(catalog, op.library);
+    const item = libraryPick(entry, await libraryItems(entry), op.item);
+    const elements = libraryStrip(item.elements);
+    if (JSON.stringify(elements).length > LIBRARY_MAX_ITEM) {
+      die(
+        `item "${
+          item.name
+        }" of "${entry.name.trim()}" is larger than ${LIBRARY_MAX_ITEM} bytes`,
+        2,
+      );
+    }
+    Object.assign(op, {
+      library: entry.name.trim(),
+      item: item.name,
+      source: `${LIBRARY_HOST}/libraries/${entry.source}`,
+      elements,
+    });
+  }
+  return ops;
 };
 
 const parsePoint = (value, flag) => {
@@ -476,7 +691,7 @@ const commands = {
     if (!Array.isArray(ops)) {
       die('expected {"ops": [...]} or a JSON array of ops', 2);
     }
-    await apply(ops.map(inlineImage));
+    await apply(await inlineLibraries(ops.map(inlineImage)));
   },
 
   async mermaid(argv) {
@@ -501,6 +716,42 @@ const commands = {
       return;
     }
     printApply(result.applied);
+  },
+
+  async library(argv) {
+    const [action, ...words] = argv;
+    const catalog = await libraryCatalog();
+    if (action === "items") {
+      const entry = libraryFind(catalog, words.join(" "));
+      const items = await libraryItems(entry);
+      console.log(
+        `${entry.name.trim()} (${entry.source}) — ${items.length} items:`,
+      );
+      items.forEach((it, k) =>
+        console.log(`${String(k + 1).padStart(3)}. ${it.name}`),
+      );
+      return;
+    }
+    if (action !== "search") {
+      die("library search [words] | library items <library>", 2);
+    }
+    const found = catalog.filter((e) => {
+      const text = `${e.name} ${e.description ?? ""}`.toLowerCase();
+      return words.every((w) => text.includes(w.toLowerCase()));
+    });
+    for (const e of found) {
+      const description = String(e.description ?? "").replace(/\s+/g, " ");
+      console.log(
+        `${e.name.trim()} — ${
+          description.length > 110
+            ? `${description.slice(0, 110)}…`
+            : description
+        } [${e.source}]`,
+      );
+    }
+    if (!found.length) {
+      console.log(`(no library matches "${words.join(" ")}")`);
+    }
   },
 
   async undo() {

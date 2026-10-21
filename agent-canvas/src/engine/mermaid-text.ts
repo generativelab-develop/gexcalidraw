@@ -887,6 +887,309 @@ export const quadrantOps = (lines: string[], prefix: string): Op[] => {
   ];
 };
 
+// ------------------------------------------------------- pie and xychart
+
+const numberList = (text: string, what: string): number[] => {
+  const inner = text.trim().replace(/^\[|\]$/g, "");
+  return inner.split(",").map((part) => {
+    const n = Number(part.trim());
+    if (!part.trim() || !Number.isFinite(n)) {
+      refuse(`${what}: "${part.trim()}" is not a number`);
+    }
+    return n;
+  });
+};
+
+export const pieOps = (lines: string[], prefix: string): Op[] => {
+  let title = lines[0].match(/^\s*pie(?:\s+showData)?\s+title\s+(.*)$/i)?.[1];
+  const slices: Record<string, unknown>[] = [];
+  for (const raw of lines.slice(1)) {
+    const line = raw.trim();
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(/^title\s+(.*)$/i))) {
+      title = m[1];
+    } else if ((m = line.match(/^"(.+)"\s*:\s*([\d.]+)$/))) {
+      slices.push({ label: m[1], value: Number(m[2]) });
+    } else if (!/^showData$/i.test(line)) {
+      refuse(`cannot read the pie chart line "${line}"`);
+    }
+  }
+  if (!slices.length) {
+    refuse('the pie chart has no slices ("label" : value)');
+  }
+  return [
+    { op: "chart", id: idFor(prefix, "pie"), type: "pie", title, slices } as Op,
+  ];
+};
+
+export const xychartOps = (lines: string[], prefix: string): Op[] => {
+  const horizontal = /\bhorizontal\b/.test(lines[0]);
+  let title: string | undefined;
+  let categories: string[] | undefined;
+  let range: [number, number] | undefined;
+  let xLabel: string | undefined;
+  let yLabel: string | undefined;
+  let min: number | undefined;
+  let max: number | undefined;
+  const series: Record<string, unknown>[] = [];
+  for (const raw of lines.slice(1)) {
+    const line = raw.trim();
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(/^title\s+(.*)$/i))) {
+      title = unquote(m[1]);
+    } else if ((m = line.match(/^x-axis\s*(?:"([^"]*)"|(\w+))?\s*(.*)$/i))) {
+      xLabel = m[1] ?? m[2];
+      const rest = m[3].trim();
+      if (rest.startsWith("[")) {
+        categories = rest
+          .replace(/^\[|\]$/g, "")
+          .split(",")
+          .map((c) => unquote(c));
+      } else if ((m = rest.match(/^([-\d.]+)\s*-->\s*([-\d.]+)$/))) {
+        range = [Number(m[1]), Number(m[2])];
+      }
+    } else if ((m = line.match(/^y-axis\s*(?:"([^"]*)"|(\w+))?\s*(.*)$/i))) {
+      yLabel = m[1] ?? m[2];
+      const r = m[3].trim().match(/^([-\d.]+)\s*-->\s*([-\d.]+)$/);
+      if (r) {
+        min = Number(r[1]);
+        max = Number(r[2]);
+      }
+    } else if ((m = line.match(/^(bar|line)\s*(?:"([^"]*)")?\s*(\[.*\])$/i))) {
+      series.push({
+        type: m[1].toLowerCase(),
+        ...(m[2] ? { label: m[2] } : null),
+        values: numberList(m[3], `the ${m[1]} line`),
+      });
+    } else {
+      refuse(`cannot read the xychart line "${line}"`);
+    }
+  }
+  if (!series.length) {
+    refuse("the xychart has no bar or line data");
+  }
+  const n = (series[0].values as number[]).length;
+  if (!categories) {
+    const [a, b] = range ?? [1, n];
+    categories = Array.from({ length: n }, (_, k) =>
+      String(Number((a + ((b - a) * k) / Math.max(1, n - 1)).toFixed(2))),
+    );
+  }
+  const bars = series.some((s) => s.type === "bar");
+  return [
+    {
+      op: "chart",
+      id: idFor(prefix, "chart"),
+      type: bars ? "bar" : "line",
+      title,
+      categories,
+      series: series.map((s) => ({
+        ...s,
+        type: bars ? s.type : undefined,
+      })),
+      ...(horizontal && bars && series.every((s) => s.type === "bar")
+        ? { horizontal: true }
+        : null),
+      ...(xLabel ? { xLabel } : null),
+      ...(yLabel ? { yLabel } : null),
+      ...(min !== undefined ? { min, max } : null),
+    } as Op,
+  ];
+};
+
+// --------------------------------------------------------------- journey
+
+export const journeyOps = (lines: string[], prefix: string): Op[] => {
+  let title: string | undefined;
+  let section = "";
+  const stages: string[] = [];
+  const sections: string[] = [];
+  const actors: string[] = [];
+  const emotions: number[] = [];
+  for (const raw of lines.slice(1)) {
+    const line = raw.trim();
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(/^title\s+(.*)$/i))) {
+      title = m[1];
+    } else if ((m = line.match(/^section\s+(.*)$/i))) {
+      section = m[1];
+    } else if ((m = line.match(/^(.+?)\s*:\s*(\d)\s*(?::\s*(.*))?$/))) {
+      stages.push(m[1]);
+      sections.push(section);
+      actors.push((m[3] ?? "").trim());
+      // Mermaid scores 1 (bad) to 5 (good); the journey block -2 to 2
+      emotions.push(Math.max(-2, Math.min(2, Number(m[2]) - 3)));
+    } else {
+      refuse(`cannot read the journey line "${line}"`);
+    }
+  }
+  if (!stages.length) {
+    refuse("the journey has no tasks (task: score: actors)");
+  }
+  const rows: Record<string, unknown>[] = [];
+  if (sections.some((s) => s)) {
+    rows.push({ label: "Section", cells: sections });
+  }
+  if (actors.some((a) => a)) {
+    rows.push({ label: "Actors", cells: actors });
+  }
+  return [
+    {
+      op: "journey",
+      id: idFor(prefix, "journey"),
+      title,
+      stages,
+      rows,
+      emotions,
+    } as Op,
+  ];
+};
+
+// ---------------------------------------------------------------- kanban
+
+export const kanbanOps = (lines: string[], prefix: string): Op[] => {
+  const columns: {
+    id: string;
+    label: string;
+    cards: { id: string; label: string }[];
+  }[] = [];
+  let columnDepth = -1;
+  for (const raw of lines.slice(1)) {
+    const depth = raw.match(/^\s*/)![0].replace(/\t/g, "  ").length;
+    const text = raw.trim();
+    const meta = text.match(/@\{(.*)\}\s*$/)?.[1];
+    const body = text.replace(/@\{.*\}\s*$/, "").trim();
+    const m = body.match(/^([^[\s]*)\s*\[(.*)\]$/);
+    const id = m?.[1] || "";
+    const label = unquote(m ? m[2] : body);
+    if (columnDepth < 0 || depth <= columnDepth) {
+      columnDepth = depth;
+      columns.push({ id: id || `col${columns.length + 1}`, label, cards: [] });
+      continue;
+    }
+    const extra = meta
+      ? meta
+          .split(",")
+          .map((pair) => {
+            const [k, v] = pair.split(":");
+            return v
+              ? `${k.trim()}: ${unquote(v.trim().replace(/^'|'$/g, ""))}`
+              : "";
+          })
+          .filter((t) => t)
+      : [];
+    const column = columns[columns.length - 1];
+    column.cards.push({
+      id: id || `${column.id}-${column.cards.length + 1}`,
+      label: [label, ...extra].join("\n"),
+    });
+  }
+  if (!columns.length) {
+    refuse("the kanban board has no columns");
+  }
+  const board = idFor(prefix, "board");
+  const ops: Op[] = [
+    {
+      op: "group",
+      id: board,
+      label: "Kanban",
+      layout: "grid",
+      columns: columns.length,
+    },
+  ];
+  columns.forEach((column, k) => {
+    const gid = idFor(prefix, `col-${column.id}`);
+    ops.push({
+      op: "group",
+      id: gid,
+      label: column.label,
+      parent: board,
+      layout: "grid",
+      columns: 1,
+      color: BRANCH_COLORS[k % BRANCH_COLORS.length],
+    });
+    for (const card of column.cards) {
+      ops.push({
+        op: "node",
+        id: idFor(prefix, card.id),
+        label: card.label,
+        shape: "sticky",
+        group: gid,
+      });
+    }
+  });
+  return ops;
+};
+
+// --------------------------------------------------------- timeline (events)
+
+export const timelineEventOps = (lines: string[], prefix: string): Op[] => {
+  let title: string | undefined;
+  let section = "";
+  const periods: { label: string; events: string[]; section: string }[] = [];
+  for (const raw of lines.slice(1)) {
+    const line = raw.trim();
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(/^title\s+(.*)$/i))) {
+      title = m[1];
+    } else if ((m = line.match(/^section\s+(.*)$/i))) {
+      section = m[1];
+    } else if (line.startsWith(":")) {
+      if (!periods.length) {
+        refuse(`"${line}" continues no period`);
+      }
+      periods[periods.length - 1].events.push(
+        ...line
+          .slice(1)
+          .split(/\s:\s/)
+          .map((e) => e.trim())
+          .filter((e) => e),
+      );
+    } else {
+      const [label, ...events] = line.split(/\s:\s|\s:$/);
+      periods.push({
+        label: label.trim(),
+        events: events.map((e) => e.trim()).filter((e) => e),
+        section,
+      });
+    }
+  }
+  if (!periods.length) {
+    refuse("the timeline has no periods");
+  }
+  const events = periods.map((p) => ({ items: p.events }));
+  if (!periods.some((p) => p.section)) {
+    return [
+      {
+        op: "table",
+        id: idFor(prefix, "timeline"),
+        title,
+        columns: periods.map((p) => p.label),
+        rows: [events],
+      } as Op,
+    ];
+  }
+  // sections above their periods: the header row spans each section
+  const sections: Record<string, unknown>[] = [];
+  for (const p of periods) {
+    const last = sections[sections.length - 1];
+    if (last && last.text === p.section) {
+      last.span = (last.span as number) + 1;
+    } else {
+      sections.push({ text: p.section, span: 1, align: "center" });
+    }
+  }
+  return [
+    {
+      op: "table",
+      id: idFor(prefix, "timeline"),
+      title,
+      columns: sections,
+      rows: [periods.map((p) => ({ title: p.label, align: "center" })), events],
+    } as Op,
+  ];
+};
+
 /** The reader for a diagram's first line; null for a flowchart. */
 export const textReader = (
   header: string,
@@ -909,10 +1212,21 @@ export const textReader = (
       return ganttOps;
     case "quadrantChart":
       return quadrantOps;
+    case "pie":
+      return pieOps;
+    case "xychart-beta":
+    case "xychart":
+      return xychartOps;
+    case "journey":
+      return journeyOps;
+    case "kanban":
+      return kanbanOps;
+    case "timeline":
+      return timelineEventOps;
     default:
       return null;
   }
 };
 
 export const SUPPORTED =
-  "flowchart/graph, sequenceDiagram, classDiagram, erDiagram, stateDiagram-v2, mindmap, gantt, quadrantChart";
+  "flowchart/graph, sequenceDiagram, classDiagram, erDiagram, stateDiagram-v2, mindmap, gantt, quadrantChart, pie, xychart-beta, journey, kanban, timeline";

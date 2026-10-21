@@ -61,8 +61,9 @@ export const outlineSize = (
       return { width: w + h * 0.5, height: h };
     case "actor":
       return {
-        width: Math.max(ACTOR.min, label.width + 8),
-        height: ACTOR.figure + label.height + 8,
+        // the editor pads a bound label 5px a side: less room wraps it
+        width: Math.max(ACTOR.min, label.width + 20),
+        height: ACTOR.figure + label.height + 14,
       };
     case "bar":
       return direction === "RIGHT" || direction === "LEFT"

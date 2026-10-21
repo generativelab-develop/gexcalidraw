@@ -1,6 +1,6 @@
 ---
 name: gexcal
-description: Draw and annotate on a live Excalidraw canvas through the `gexcal` CLI — architecture, flows, sequence, UML/ER and state diagrams, mind maps, org charts, Gantt/roadmaps, SWOT/Lean Canvas tables, quadrants, personas, wireframes, brainstorm boards, slides, free sketches — and read back what a person changed. Use when asked to draw, sketch, map or diagram anything, to put notes/memos on a diagram, or to update an existing .excalidraw file.
+description: Draw and annotate on a live Excalidraw canvas through the `gexcal` CLI — architecture, flows, sequence, UML/ER and state diagrams, mind maps, org charts, Gantt/roadmaps, SWOT/Lean Canvas tables, quadrants, personas, wireframes, dashboards, charts (bar, line, pie, funnel, scatter, function graphs), Wardley maps, event storming, C4, BPMN, network diagrams, brainstorm boards, slides, items from the community libraries at libraries.excalidraw.com, free sketches — and read back what a person changed. Use when asked to draw, sketch, map or diagram anything, to put notes/memos on a diagram, or to update an existing .excalidraw file.
 ---
 
 # gexcal: drawing on a live Excalidraw canvas
@@ -17,7 +17,7 @@ Run it as `gexcal <command>` if it is on PATH, otherwise `node <gexcalidraw>/age
 4. **Look at it**: `gexcal export /tmp/view.png`, then open the PNG (Read it). Fix what looks wrong; do not report a diagram you have not looked at.
 5. **Annotate** with notes: `gexcal note "why this matters" --on <id>`.
 
-**What you can draw** — every op, layout and block, and a recipe for each kind of whiteboard drawing (architecture, flowchart, DFD, sequence, UML, ER, state, mind map, org chart, Gantt, SWOT, Lean Canvas, competitor analysis, personas, wireframes, brainstorm, slides, game design, free sketches) — is in [`reference.md`](reference.md) beside this file. Read it before drawing anything that is not a plain box-and-arrow diagram.
+**What you can draw** — every op, layout and block, and a recipe for each kind of whiteboard drawing (architecture, flowchart, DFD, sequence, UML, ER, state, mind map, org chart, Gantt, SWOT, Lean Canvas, competitor analysis, personas, wireframes, brainstorm, slides, game design, charts and dashboards, Wardley maps, event storming, C4, BPMN, networks, circuits, floor plans, data structures, family trees, boards and trackers, matrices, comics, free sketches) — is in [`reference.md`](reference.md) beside this file. Read it before drawing anything that is not a plain box-and-arrow diagram.
 
 ## Ids and ops
 
@@ -57,7 +57,7 @@ Ids are yours and stable (`[A-Za-z0-9][A-Za-z0-9_.:>-]*`; an edge is `from->to` 
 | `edge` | `from`, `to`, `label`, `line` (solid, dashed, dotted), `head`, `tail`, `color`, `id` | ends may be blocks or `<screen>.<widget id>`; `head`/`tail` take Excalidraw's arrowheads or `none`; default id is `from->to` |
 | `group` | `id`, `label`, `parent`, `color`, `frame`, `slide`, `layout`, `columns` | groups nest through `parent`; `frame`/`slide` draw an Excalidraw frame |
 | `note` | `text`, `on` (a node, edge, group or block id), `id`, `color`, `at` | a sticky note placed beside its target, linked with a dashed line; ids default to `note-N` |
-| `table` `quadrant` `sequence` `timeline` `wireframe` `sketch` `profile` `radar` `legend` `journey` `image` | `id`, `group`, and the block's own description | a figure drawn from data and placed as one box (reference.md §4); `image` takes a file path in `src` |
+| `table` `quadrant` `sequence` `timeline` `wireframe` `sketch` `profile` `radar` `legend` `journey` `image` `chart` `wardley` `library` | `id`, `group`, and the block's own description | a figure drawn from data and placed as one box (reference.md §4); `image` takes a file path in `src`; `library` names a library and an item (`gexcal library search|items`) and gexcal fetches it |
 | `remove` | `id` | removing a node or block removes its edges; removing a group keeps its members |
 | `layout` | `direction` (RIGHT, DOWN, LEFT, UP), `algorithm` (layered, tree, radial, grid, lanes), `columns`, `keepPinned` | re-lays out everything; `keepPinned` keeps hand-placed boxes where they are |
 | `meta` | `direction`, `theme` (clean, sketch), `layout`, `columns` |  |
@@ -69,7 +69,7 @@ A batch is all-or-nothing: an op that names a missing node/group, reuses an id f
 
 ## From Mermaid
 
-A Mermaid flowchart (`flowchart LR` / `graph TD`) becomes the same agent-owned nodes, edges and groups, with the Mermaid ids; `sequenceDiagram`, `classDiagram`, `erDiagram`, `stateDiagram-v2`, `mindmap`, `gantt` and `quadrantChart` become the matching cards, edges and blocks (reference.md §6):
+A Mermaid flowchart (`flowchart LR` / `graph TD`) becomes the same agent-owned nodes, edges and groups, with the Mermaid ids; `sequenceDiagram`, `classDiagram`, `erDiagram`, `stateDiagram-v2`, `mindmap`, `gantt`, `quadrantChart`, `pie`, `xychart-beta`, `journey`, `kanban` and `timeline` become the matching cards, edges and blocks (reference.md §6):
 
 ```
 gexcal mermaid flow.mmd                # draw it

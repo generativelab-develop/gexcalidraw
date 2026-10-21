@@ -11,6 +11,7 @@ import { OUTLINE_SHAPES } from "./shapes";
 
 import type {
   BlockModel,
+  Border,
   BlockType,
   Direction,
   EdgeModel,
@@ -39,6 +40,7 @@ export type Op =
       fields?: string[] | string[][] | null;
       size?: TextSize | null;
       link?: string | null;
+      border?: Border | null;
       at?: [number, number];
       width?: number;
       height?: number;
@@ -64,6 +66,7 @@ export type Op =
       slide?: boolean;
       layout?: Layout | null;
       columns?: number | null;
+      border?: Border | null;
     }
   | ({
       op: BlockType;
@@ -132,6 +135,7 @@ const DIRECTIONS: Direction[] = ["RIGHT", "DOWN", "LEFT", "UP"];
 const THEMES: Theme[] = ["clean", "sketch"];
 export const LAYOUTS: Layout[] = ["layered", "tree", "radial", "grid", "lanes"];
 const SIZES: TextSize[] = ["s", "m", "l", "xl"];
+const BORDERS: Border[] = ["solid", "dashed", "dotted", "bold", "none"];
 export const HEADS: Head[] = [
   "none",
   "arrow",
@@ -241,6 +245,16 @@ const checkLayout = (
   }
 };
 
+const checkBorder = (index: number, op: unknown, border: unknown) => {
+  if (
+    border !== undefined &&
+    border !== null &&
+    !BORDERS.includes(border as Border)
+  ) {
+    fail(index, op, `border must be one of ${BORDERS.join(", ")}`);
+  }
+};
+
 /** A link opens from the element: a web address or any short reference. */
 const checkLink = <T>(index: number, op: unknown, link: T): T => {
   if (
@@ -322,6 +336,7 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           op.fields === undefined
             ? undefined
             : sectionsOf(index, op, op.fields);
+        checkBorder(index, op, op.border);
         const prev = model.nodes.get(op.id);
         if (!prev && (typeof op.label !== "string" || !op.label.trim())) {
           fail(index, op, "a new node needs a non-empty `label`");
@@ -336,13 +351,17 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           color: optional(op.color, prev?.color),
           fields: op.fields === undefined ? prev?.fields : fields,
           size: optional(op.size, prev?.size),
+          border: optional(op.border, prev?.border),
           link: optional(checkLink(index, op, op.link), prev?.link),
           x: op.at ? op.at[0] : prev?.x,
           y: op.at ? op.at[1] : prev?.y,
           width: op.width ?? prev?.width,
           height: op.height ?? prev?.height,
           pinned: op.at ? true : prev?.pinned ?? false,
-          style: op.color !== undefined ? undefined : prev?.style,
+          style:
+            op.color !== undefined || op.border !== undefined
+              ? undefined
+              : prev?.style,
         };
         if (node.fields && node.shape !== "rect") {
           fail(
@@ -462,6 +481,7 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           fail(index, op, "a new group needs a non-empty `label`");
         }
         checkLayout(index, op, op.layout, op.columns);
+        checkBorder(index, op, op.border);
         for (const flag of ["frame", "slide"] as const) {
           if (op[flag] !== undefined && typeof op[flag] !== "boolean") {
             fail(index, op, `${flag} is true or false`);
@@ -477,12 +497,16 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
           slide: op.slide ?? prev?.slide,
           layout: optional(op.layout, prev?.layout),
           columns: optional(op.columns, prev?.columns),
+          border: optional(op.border, prev?.border),
           x: prev?.x,
           y: prev?.y,
           width: prev?.width,
           height: prev?.height,
           pinned: prev?.pinned ?? false,
-          style: op.color !== undefined ? undefined : prev?.style,
+          style:
+            op.color !== undefined || op.border !== undefined
+              ? undefined
+              : prev?.style,
         };
         deferred.push(() => {
           if (group.parent && !model.groups.has(group.parent)) {
@@ -698,6 +722,13 @@ export const applyOps = (model: Model, ops: Op[]): ApplyOutcome => {
         if (type === "image" && spec.src === undefined && prev) {
           // a new label or width for a picture already in the scene
           spec.fileId = prev.spec.fileId;
+        }
+        if (type === "library" && spec.elements === undefined && prev) {
+          // a new caption or size for an item already drawn
+          spec.elements = prev.spec.elements;
+          spec.library ??= prev.spec.library;
+          spec.item ??= prev.spec.item;
+          spec.source ??= prev.spec.source;
         }
         try {
           validateBlock(type, spec);

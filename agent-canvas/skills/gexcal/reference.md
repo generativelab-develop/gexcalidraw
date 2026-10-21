@@ -3,7 +3,10 @@
 The canvas engine (this agent canvas) draws from **ops**: JSON objects
 that name things by ids you choose. This file is the whole vocabulary and, in
 §5, a recipe for every use case Excalidraw documents (plus.excalidraw.com/use-cases
-and each case's own page, with the kinds and techniques each page lists). The
+and each case's own page, with the kinds and techniques each page lists) and for
+the domains the community libraries at libraries.excalidraw.com are drawn for
+(charts and dashboards, Wardley maps, event storming, C4, BPMN, network and
+cloud diagrams, circuits, floor plans, data structures, family trees …). The
 same ops go through `cerebrate canvas apply` (Cerebrate's 기획 screen) and
 `gexcal apply` (the standalone canvas).
 
@@ -34,6 +37,24 @@ cards inside a slide, notes on a wireframe, a radar chart above a profile.
 | game design: brainstorm, lo-fi prototype, mechanics, level map, HUD/menus, dialogue tree, story map, schedule, inspiration board | flows, `sketch`, `wireframe` (`device: "game"`), `tree`, `image`, `timeline` | §5.15 |
 | job interviews: system design task, UX whiteboard challenge, interviewer notes, hiring process, candidate prep | frames, architecture, notes, lanes | §5.16 |
 | education: explaining a concept, lecture slides, assignments | any of the above in frames/slides | §5.17 |
+| bar / column / line / area / pie / donut / funnel chart, a combination chart, a target line | `chart` block, or Mermaid `pie` / `xychart-beta` | §4.12, §5.18 |
+| scatter plot, a function's graph, supply and demand, coordinate axes | `chart` with `type: "scatter"` (`origin: true`) | §4.12, §5.18 |
+| dashboard, admin screen, KPI cards | `wireframe` with `stat`, `chart`, `map`, `table` widgets | §4.5, §5.18 |
+| Wardley map | `wardley` block | §4.13, §5.19 |
+| a drawing from a community library (AWS / Azure / GCP / Kubernetes icons, logic gates, circuit symbols, floor-plan furniture, device frames, stick figures, event-storming stickies …) | `library` op | §4.14 |
+| event storming, domain-driven design, domain storytelling | coloured stickies in lanes, `library` | §5.20 |
+| C4 (context, container, component), ArchiMate, team topologies | cards + dashed boundaries (`border`) | §5.21 |
+| BPMN process | events, tasks, gateways, pools and lanes | §5.22 |
+| network topology, cloud architecture, data centre racks, home lab | groups, `cloud`, `box3d`, `library` icons | §5.23 |
+| circuits, logic gates, P&ID, signal processing, electrical one-line | `library` symbols + `sketch` wires, or block diagrams | §5.24 |
+| floor plan, room layout, map, sports field, game board, battle map | `sketch`, `library` furniture | §5.25 |
+| data structures and algorithms: array, linked list, stack, queue, tree, graph, hash table, matrix | tables and graph nodes | §5.26 |
+| family tree, genealogy, org chart | `layout: "tree"` | §5.27 |
+| kanban / scrum board, retro board, habit or mood tracker, calendar | groups of stickies, `table` | §5.28 |
+| risk matrix, heat map, decision matrix, RACI | coloured `table` | §5.29 |
+| comic, storyboard, explainer with characters and speech bubbles | frames, `library` stick figures, `sketch` bubbles | §5.30 |
+| git branches and merges | `lanes` with commit circles | §5.31 |
+| sitemap, information architecture | `tree` with `document` pages | §5.32 |
 | a legend for colours or shapes | `legend` block | §4.9 |
 | a picture (screenshot, photo, reference) | `image` block | §4.11 |
 | an icon, an illustration, a map, anything none of the above draws | `sketch` block (shapes and pen strokes in your own coordinates) | §4.6 |
@@ -61,6 +82,7 @@ and nothing changes.
 | `size` | `s` `m` (default) `l` `xl` — the label's font size; `l`/`xl` text nodes are titles |
 | `fields` | turns a `rect` node into a **card**: the label is the title, then sections under rules. A list of lines is one section; a list of lists is several: `[["+id: UUID"], ["+login()"]]` |
 | `link` | a URL (or any reference) the node opens: a study, a document, another plan |
+| `border` | `solid`, `dashed` (external, optional, a boundary), `dotted`, `bold` (a BPMN end event, an emphasis), `none` |
 | `group` | the group (or frame, or lane) it belongs to |
 | `width`, `height` | fix the size (rarely needed; e.g. a 36x36 start dot) |
 
@@ -129,6 +151,7 @@ Arrowheads: `none` `arrow` `bar` `circle` `circle_outline` `triangle`
 | `slide` | `true` makes it a frame at least 960x540 (16:9): a presentation slide |
 | `layout` | how THIS group arranges its members (§3) |
 | `columns` | for `layout: "grid"`, members per row |
+| `border` | `dashed` (default), `solid`, `dotted`, `bold`, `none` — a C4 system boundary is `dashed`, a BPMN pool `solid` |
 
 Frames do not nest inside frames, and a wireframe (itself a frame) cannot go in one.
 
@@ -304,6 +327,9 @@ by side, `grid` wraps them in `columns`.
 | `progress` | `label`, `value` (0–1), `color` — also a game's HP/MP bar |
 | `slots` | game inventory or skill bar: `items` (what is in each slot), `count`, `columns` |
 | `minimap` | a game's minimap, `label` |
+| `stat` | a KPI card: `label` (the metric), `text` (the value), `delta` (`"+12%"` green, `"-3%"` red) |
+| `chart` | a chart card: `label`, `chart` (`bar` `line` `area` `pie` `donut`), `values` (numbers, else a placeholder shape), `height` `s` `m` `l` |
+| `map` | a map with roads and pins: `label`, `count` (pins), `height` |
 | `divider`, `spacer` | `spacer` takes `height`: `s` `m` `l` |
 | `row`, `grid` | `items`: widgets; `grid` takes `columns` |
 
@@ -403,6 +429,77 @@ drawn under the chart. Keep it to the main rivals.
 `src` is a png, jpg, webp, gif or svg file path (the command reads it; at most
 650 KB) or a data URL. `width` sets the drawn width; the height follows the
 picture. Resend with the same id and no `src` to change the caption or width.
+
+### 4.12 chart
+
+```json
+{ "op": "chart", "id": "rev", "type": "bar", "title": "월별 매출", "unit": "억",
+  "categories": ["1월", "2월", "3월", "4월"],
+  "series": [{ "label": "2025", "values": [12, 15, 9, 20] },
+             { "label": "2026", "values": [14, 18, 11, 24] },
+             { "label": "목표", "values": [15, 16, 17, 18], "type": "line", "color": "red" }],
+  "lines": [{ "value": 20, "label": "연간 목표" }] }
+```
+
+| `type` | takes | notes |
+| --- | --- | --- |
+| `bar` | `categories`, `series` [{label, values, color, type}] | `stacked: true` stacks the series with a total on top; `horizontal: true` lays the bars across with the names on the left (rankings, long names); a series with `type: "line"` or `"area"` is drawn over the bars (a combination chart) |
+| `line`, `area` | `categories`, `series` | `stacked: true` stacks areas; `values: true` writes each value |
+| `pie`, `donut` | `slices` [{label, value, color}] | shares written in the slices, a key with value and share; a donut's `center` is the text in its hole (a total) |
+| `funnel` | `slices` in order | each stage narrows to its value, with its share of the first stage |
+| `scatter` | `series` [{label, points, color, line, dots}] | a point is `[x, y]` or `{x, y, label, size}`; `line: true` joins the points in order (a function's graph, a trend, a curve); `origin: true` draws the axes through zero with arrows (maths); `xMin`, `xMax` |
+
+All charts: `title`, `xLabel`, `yLabel`, `unit` (after every value: `"억"`, `"%"`), `min`, `max`, `grid: false`, `values` (default on for bars), `legend`, `lines` (dashed reference lines: a target, an average, a budget), `width`, `height`. Series without a `color` take violet, blue, orange, green, red, teal, pink, yellow in turn; keep one colour per thing across charts. A legend shows when two or more series are named.
+
+### 4.13 wardley (Wardley map)
+
+```json
+{ "op": "wardley", "id": "map", "title": "찻집",
+  "components": [
+    { "id": "user", "label": "손님", "evolution": 0.8, "visibility": 1, "kind": "anchor" },
+    { "id": "cup", "label": "차 한 잔", "evolution": 0.8, "visibility": 0.88 },
+    { "id": "kettle", "label": "주전자", "evolution": 0.43, "visibility": 0.45, "evolve": 0.62, "inertia": true },
+    { "id": "power", "label": "전기", "evolution": 0.9, "visibility": 0.1, "method": "outsource" }],
+  "links": [["user", "cup"], ["cup", "kettle"], { "from": "kettle", "to": "power", "label": "전력" }],
+  "notes": [{ "text": "표준화 압력", "evolution": 0.55, "visibility": 0.3 }] }
+```
+
+`evolution` 0–1 runs Genesis → Custom-Built → Product (+rental) → Commodity
+(+utility) (`stages` renames them); `visibility` 1 is what the user sees, 0 is
+deep in the value chain. `kind`: `component` (circle), `anchor` (the user or
+the business, bold text at the top), `market`, `ecosystem`. `evolve` draws a red
+dashed arrow to where the component is heading, `inertia` the bar that holds it
+back, `method` `build` / `buy` / `outsource` the circle behind it.
+
+### 4.14 library (an item from libraries.excalidraw.com)
+
+The Excalidraw community publishes more than 230 libraries of drawings: AWS,
+Azure, GCP, Kubernetes, Docker and other technology icons, system-design
+components, logic gates and circuit symbols, network and rack equipment,
+floor-plan furniture, device and browser frames, UI kits, stick figures and
+characters, event-storming and Wardley symbols, music, chemistry, maths and
+biology symbols. Find one, list its items, then name the item:
+
+```
+cerebrate canvas library search kubernetes          # libraries whose name or description match
+cerebrate canvas library items "Kubernetes Icons Set"   # its items, numbered
+```
+
+(`gexcal library search|items` on the standalone canvas.)
+
+```json
+{ "op": "library", "id": "job", "library": "Kubernetes Icons Set", "item": "job", "label": "야간 배치", "width": 80 }
+```
+
+`library` is the library's name, id or source (two libraries share a name:
+the error lists their sources); `item` is the item's name or its number from
+`items` (`"#3"`). The command fetches the item and puts its `elements` in the
+op; the drawing keeps the item's own colours and lines, `width` scales it, and
+`label` captions it. A library item is a block: edges and notes attach to it
+and the layout places it, so icons make a diagram:
+`{"op":"edge","from":"lambda","to":"ec2"}`. Resend with the same `id` and no
+`item` to change only the caption or size. Pictures inside a library item are
+not drawn. Downloads are kept for a day.
 
 ## 5. Recipes
 
@@ -811,6 +908,181 @@ Explain a concept with a mind map or flowchart broken into small parts; put
 lecture material on slides (§5.14); give an assignment as a frame with the task
 and an empty frame beside it for the answer; link related plans with `link`.
 
+### 5.18 Charts and dashboards
+
+Choose the chart from the question: a comparison across things → `bar`
+(`horizontal` for rankings or long names), a change over time → `line` (`area`
+for volumes, stacked for parts of a whole), a share of a whole → `pie` or
+`donut` (at most six slices; otherwise a bar), a drop between steps → `funnel`,
+a relation between two numbers → `scatter`, plan against actual → a bar with a
+`type: "line"` target series or a `lines` reference line. Write the unit, start
+the value axis at zero for bars, and label the source in a note.
+
+A **dashboard** is a `wireframe` (`device: "desktop"`): a `grid` of `stat` KPI
+cards across the top, `chart` cards in `row`s, a `table` of recent items; or, to
+show real numbers, `chart` blocks in a `layout: "grid"` group with the KPIs as
+`text` nodes. A **maths graph** is a `scatter` with `origin: true` and points
+computed from the function (40–80 points, `line: true`); a geometry figure, a
+vector or an angle is a `sketch`. Economics curves (supply and demand, cost
+curves) are `scatter` lines of two points with `grid: false` and a labelled
+point where they cross.
+
+### 5.19 Wardley maps
+
+Start from the user need (an `anchor`), list what it depends on down the value
+chain, place each by how evolved it is, link dependencies, then mark movement
+(`evolve`), resistance (`inertia`) and the build / buy / outsource choice
+(`method`). Notes carry climatic patterns and gameplay. One map per scope.
+
+### 5.20 Event storming, DDD and domain storytelling
+
+**Event storming** uses sticky colours with fixed meanings — domain event
+`orange` (past tense, "주문됨"), command `blue`, actor small `yellow`, aggregate
+`yellow` (large), policy `violet` ("…하면 …한다"), read model `green`, external
+system `pink`, hot spot `red` (a question or conflict). Lay events along time
+(a group with `layout: "grid"` and many `columns`, or `direction: "RIGHT"`
+edges), commands before the events they cause, and group them into bounded
+contexts (groups with `border: "dashed"`). `library` "Event Storming" has the
+classic shapes. **Domain storytelling**: `actor` nodes, work objects as
+`document` / `rect` nodes, and numbered edges (`"1: 주문서를 보낸다"`) for
+the sentences of the story.
+
+```json
+[{"op":"meta","direction":"RIGHT","theme":"sketch"},
+ {"op":"node","id":"cust","label":"고객","shape":"sticky","color":"yellow"},
+ {"op":"node","id":"place","label":"주문하기","shape":"sticky","color":"blue"},
+ {"op":"node","id":"placed","label":"주문됨","shape":"sticky","color":"orange"},
+ {"op":"node","id":"pol","label":"주문되면 재고를 잡는다","shape":"sticky","color":"violet"},
+ {"op":"node","id":"reserved","label":"재고 잡힘","shape":"sticky","color":"orange"},
+ {"op":"node","id":"q","label":"재고가 없으면?","shape":"sticky","color":"red"},
+ {"op":"edge","from":"cust","to":"place","head":"none"},{"op":"edge","from":"place","to":"placed"},
+ {"op":"edge","from":"placed","to":"pol"},{"op":"edge","from":"pol","to":"reserved"},
+ {"op":"edge","from":"reserved","to":"q","line":"dotted","head":"none"}]
+```
+
+### 5.21 C4, ArchiMate and team topologies
+
+**C4**: a person is an `actor` (or `library` "C4 Architecture" `Person`); a
+software system, container or component is a card-like node whose label is
+`"이름\n[Container: Go]\n짧은 설명"`, in blue for ours and gray for external
+ones (`border: "dashed"` for systems outside the scope); a system boundary is a
+group with `border: "dashed"`; edges say what and how (`"주문을 보낸다\n[JSON/HTTPS]"`).
+Draw one level per diagram: context, then containers, then components.
+**ArchiMate**: layers as groups — business `yellow`, application `blue`,
+technology `green` — with the element type in the label (`«application service»`).
+**Team topologies**: stream-aligned teams as wide `yellow` nodes, platform
+`blue`, enabling `violet`, complicated-subsystem `orange` `hexagon`s; edges
+labelled with the interaction mode (collaboration, X-as-a-service, facilitating).
+
+### 5.22 BPMN
+
+Start event `circle` (`color: "green"`), end event `circle` with
+`border: "bold"` (`color: "red"`), intermediate event `circle` with
+`border: "dashed"`, task a rounded `rect`, gateway a `diamond` labelled `X`
+(exclusive), `+` (parallel) or `O` (inclusive), data object `document`, data
+store `cylinder`. A pool is a group with `layout: "lanes"` and
+`border: "solid"`, its lanes child groups; sequence flow solid edges, message
+flow between pools `line: "dashed"` with `tail: "circle_outline"`.
+
+```json
+[{"op":"group","id":"pool","label":"주문 처리","layout":"lanes","border":"solid"},
+ {"op":"group","id":"sales","label":"영업","parent":"pool"},
+ {"op":"group","id":"wh","label":"창고","parent":"pool"},
+ {"op":"node","id":"s","label":"주문 접수","shape":"circle","color":"green","group":"sales"},
+ {"op":"node","id":"check","label":"재고 확인","group":"sales"},
+ {"op":"node","id":"gw","label":"X","shape":"diamond","group":"sales"},
+ {"op":"node","id":"ship","label":"출고","group":"wh"},
+ {"op":"node","id":"e","label":"완료","shape":"circle","border":"bold","color":"red","group":"wh"},
+ {"op":"edge","from":"s","to":"check"},{"op":"edge","from":"check","to":"gw"},
+ {"op":"edge","from":"gw","to":"ship","label":"있음"},{"op":"edge","from":"ship","to":"e"}]
+```
+
+### 5.23 Network, cloud and data-centre diagrams
+
+Zones as nested groups (region › VPC › subnet, or site › rack), the internet
+as a `cloud`, servers as `box3d`, databases as `cylinder`, firewalls and load
+balancers as `kind: "api"` or library icons (`cerebrate canvas library search
+aws` / `azure` / `gcp` / `network` / `rack`); label links with the protocol,
+port or bandwidth. For an icon-based cloud diagram put `library` items in the
+groups instead of nodes — they take edges the same way. A rack elevation is a
+`table` of one column with a row per unit, or a `sketch`.
+
+### 5.24 Circuits, logic, P&ID and signal processing
+
+Fetch the symbols (`library search logic`, `circuit`, `schematic`,
+`electrical`, `piping`, `signal`) and connect them with edges; for a precise
+schematic draw the wires in a `sketch` with `line`s at right angles. A signal
+or control block diagram is plain nodes (`rect` blocks, `circle` summing
+points labelled `Σ` or `+`) with labelled edges, `direction: "RIGHT"`.
+
+### 5.25 Floor plans, maps, fields and boards
+
+A `sketch` holds walls (`line`s with `width: 4`), rooms (`rect`s with `text`),
+doors (`arrow`s or arcs drawn with `freedraw`) and dimensions (`text`);
+furniture comes from `library search floor plan` / `furniture` / `office`. A
+map is `polygon` regions, `freedraw` rivers and roads, `ellipse` pins and
+`text` names. A sports field or a game board is `rect`s and `line`s to scale
+(a chess board: 64 `rect`s alternating `fill`), pieces and tokens from a
+library (`chess`, `boardgame`, `DnD`).
+
+### 5.26 Data structures and algorithms
+
+- **array / string**: a one-row `table`, the indices as `columns`.
+- **matrix / grid / DP table**: a `table` with `rowHeaders`, cells coloured to show the path.
+- **linked list**: `rect` nodes with `fields` `[["value"], ["next"]]`, `direction: "RIGHT"`, a `text` node `null` at the end.
+- **stack / queue**: a `table` of one column (top first) or one row (front first), with a note for push / pop.
+- **tree / heap / trie**: `circle` nodes, `layout: "tree"`, `head: "none"`.
+- **graph**: nodes with edges (`head: "none"` when undirected), weights as labels; `radial` or `layered`.
+- **hash table**: a one-column `table` of buckets with edges from each bucket to its chain of nodes.
+- **algorithm steps**: one frame per step in a `grid`, the changed cells coloured, a caption saying what changed.
+
+### 5.27 Family trees and org charts
+
+`layout: "tree"`, `direction: "DOWN"`. A couple is a group (`layout: "grid"`,
+`columns: 2`, `border: "none"`) holding the two people; edges go from the
+couple group's members to each child, `head: "none"`. An org chart puts each
+person in a card (`fields: [["팀장"], ["김지은"]]`), departments as colours.
+
+### 5.28 Boards and trackers
+
+A **kanban / scrum board** is a group with `layout: "grid"` and one column per
+state (`Mermaid kanban` writes it), each column a group with `columns: 1`
+holding `sticky` cards; a swimlane per team is a further level of groups. A
+**retrospective** is three or four such columns (잘된 점 · 아쉬운 점 · 시도할
+것). A **habit, mood or bullet-journal tracker** and a **calendar** are a
+`table`: days as columns (or a 7-column month with dates in the cells), colour
+the cells that are done.
+
+### 5.29 Matrices
+
+A **risk matrix** is a 5x5 `table` with likelihood as rows and impact as
+columns, cells coloured green → yellow → orange → red and the risks written in
+the cells; a **decision matrix** has options as rows, weighted criteria as
+columns and a total column; a **RACI** chart has tasks as rows, roles as
+columns and R/A/C/I in the cells; a **heat map** colours each cell by its value
+with a `legend`.
+
+### 5.30 Comics, storyboards and explainers
+
+One frame per panel (`group` with `frame: true` in a `grid`); characters from
+`library search stick` / `character` / `people`, speech bubbles as a `sketch`
+(an `ellipse` with `text` and a `polygon` tail), captions as `text`. A
+storyboard adds a note per panel for the shot and the sound. Use the `sketch`
+theme.
+
+### 5.31 Git branches
+
+`layout: "lanes"`, one lane per branch (`main`, `feature/…`); commits are
+small `circle` nodes labelled with a short hash or message, edges from parent
+to child, a merge commit has two incoming edges, tags as notes.
+
+### 5.32 Sitemaps and information architecture
+
+`layout: "tree"` with pages as `document` nodes (or `rect`), sections as
+colours, and dashed edges for links that are not part of the hierarchy;
+Jesse James Garrett's notation: decision points as `diamond`s, page stacks as
+`document`s, areas as groups.
+
 ## 6. Mermaid
 
 `mermaid` turns these kinds into the ops above, editable by id afterwards:
@@ -825,6 +1097,11 @@ and an empty frame beside it for the answer; link related plans with `link`.
 | `mindmap` | a radial tree, one colour per branch |
 | `gantt` | one `timeline` block (`dateFormat YYYY-MM-DD` only); `after` becomes a dependency arrow, `done`/`active`/`crit`/`milestone` carry over |
 | `quadrantChart` | one `quadrant` block |
+| `pie` | one `chart` (`type: "pie"`) |
+| `xychart-beta` | one `chart`: bars and lines together are a combination chart; `horizontal` lays bars across |
+| `journey` | one `journey` block: tasks as stages, the 1–5 scores as feelings, sections and actors as rows |
+| `kanban` | a board group with a column group per state and a sticky per card (metadata in the card) |
+| `timeline` | a `table`: sections over periods over their events |
 
 Ids come from the Mermaid names (a name with Hangul gets an ASCII id with a
 short tag); `--prefix` namespaces them; `--print` shows the ops without drawing.

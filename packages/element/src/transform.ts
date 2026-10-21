@@ -363,6 +363,11 @@ const bindLinearElementToElement = (
         });
       } else {
         switch (startType) {
+          // a sticky note on the canvas binds as it is
+          case "stickynote": {
+            startBoundElement = existingElement!;
+            break;
+          }
           case "rectangle":
           case "ellipse":
           case "diamond": {
@@ -440,6 +445,11 @@ const bindLinearElementToElement = (
         });
       } else {
         switch (endType) {
+          // a sticky note on the canvas binds as it is
+          case "stickynote": {
+            endBoundElement = existingElement!;
+            break;
+          }
           case "rectangle":
           case "ellipse":
           case "diamond": {
